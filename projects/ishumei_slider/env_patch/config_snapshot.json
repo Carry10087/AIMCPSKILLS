@@ -1,0 +1,91 @@
+{
+  "domains": [
+    "captcha1.fengkongcloud.cn"
+  ],
+  "registerUrl": "/ca/v1/register",
+  "fVerifyUrl": "/ca/v1/fverify",
+  "fVerifyUrlV2": "/ca/v2/fverify",
+  "captchaTypeDomains": [
+    "captcha.fengkongcloud.com"
+  ],
+  "captchaTypeUrl": "/ca/v1/type_captcha",
+  "confUrl": "/ca/v1/conf",
+  "logUrl": "/ca/v1/log",
+  "logDisabled": false,
+  "appendTo": "floatCtn",
+  "customData": {},
+  "disabled": false,
+  "mode": "slide",
+  "modeArr": [
+    "slide",
+    "select",
+    "auto_slide",
+    "spatial_select",
+    "icon_select",
+    "seq_select",
+    "insensitive"
+  ],
+  "noSupportModeArr": [
+    "seq_select"
+  ],
+  "langArr": [
+    "ph",
+    "ina",
+    "tha",
+    "vn",
+    "mys",
+    "jp",
+    "kr",
+    "es",
+    "bn",
+    "pt",
+    "de",
+    "fr",
+    "hi",
+    "it",
+    "ur",
+    "ru",
+    "sv",
+    "tr",
+    "ar"
+  ],
+  "product": "float",
+  "productArr": [
+    "float",
+    "popup",
+    "embed"
+  ],
+  "https": true,
+  "width": "100%",
+  "appId": "default",
+  "channel": "default",
+  "floatImagePosition": "auto",
+  "VERSION": "1.0.4",
+  "SDKVER": "1.1.3",
+  "maskBindClose": true,
+  "lang": "zh-cn",
+  "useBrowserLang": false,
+  "debug": false,
+  "trackerDomain": "tracker.fengkongcloud.com",
+  "trackerPath": "/exception",
+  "maxRetryCount": 1,
+  "style": {},
+  "os": "web",
+  "tipsMessage": {
+    "sliderPlaceholder": {
+      "slide": "向右滑动滑块填充拼图",
+      "auto_slide": "按住滑块拖动到最右边",
+      "insensitive": "点击完成验证"
+    }
+  },
+  "organization": "RlokQwRlVjUrTUlkIqOg",
+  "captchaUuid": "20260519153231fBaDzbkYnDeZzFeaF2",
+  "startRequestTime": 1779175951464,
+  "apiConf": {
+    "css": "/pr/auto-build/v1.0.4-206/style.min.css",
+    "domains": [
+      "castatic.fengkongcloud.cn"
+    ],
+    "js": "/pr/auto-build/v1.0.4-206/captcha-sdk.min.js"
+  }
+}

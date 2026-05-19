@@ -1,0 +1,26 @@
+技术需要提供
+1. ip地址或者ip端（接口要开白名单）
+2. 技术需要提供usdt账号地址，方便转账结算
+ 
+ 
+操作方法：
+1.
+举例：BASE_URL="http://43.167.215.67:xxxx"
+举例：API_TOKEN="djdowbeb78jsjw91726jsksblapu@XXXXXX"
+ 
+# 1) 拉任务
+curl -sS -X GET "${BASE_URL}/api/task/pull" \
+ -H "X-Api-Token: ${API_TOKEN}"
+# 2) 查询接口(time=YYYY-MM-DD
+curl -sS -X GET "${BASE_URL}/api/stats/daily?time=2026-04-24" \
+ -H "X-Api-Token: ${API_TOKEN}"
+# 3) 提交任务
+curl -sS -X POST "${BASE_URL}/api/task/submit" \
+ -H "X-Api-Token: ${API_TOKEN}" \
+ -H "Content-Type: application/json" \
+ --data-raw '{
+   "taskUrl": "taskUrl",
+   "taskResult": "get_pc/get_rw response content"
+ }'
+ 
+curl -sS -X GET "${BASE_URL}/api/task/pull?token=${API_TOKEN}"

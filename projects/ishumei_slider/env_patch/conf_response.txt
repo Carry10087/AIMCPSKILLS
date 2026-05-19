@@ -1,0 +1,1 @@
+sm_1779175953378({"code":1100,"message":"success","requestId":"774e8c595699d7a76b89810ef179d2e3","riskLevel":"PASS","score":0,"detail":{"css":"/pr/auto-build/v1.0.4-206/style.min.css","domains":["castatic.fengkongcloud.cn","castatic.fengkongcloud.com","castatic-a.fengkongcloud.com","castatic2.fengkongcloud.com"],"js":"/pr/auto-build/v1.0.4-206/captcha-sdk.min.js"}})

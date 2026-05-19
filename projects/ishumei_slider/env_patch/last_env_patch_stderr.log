@@ -1,0 +1,236 @@
+=== Launching env_patch_v8 ===
+
+=== LOAD smcp via w.eval ===
+initSMCaptcha: function
+
+=== CALL initSMCaptcha ===
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[SCRIPT] https://captcha1.fengkongcloud.cn/ca/v1/conf?callback=sm_1779175953378&appId=default&organization=RlokQwRlVjUrTUlkIqOg&model=slide&channel=default&rversion=1.0.
+[SCRIPT] syncing conf...
+[SCRIPT] conf body: sm_1779175953378({"code":1100,"message":"success","requestId
+[CONF DATA] js: "/pr/auto-build/v1.0.4-206/captcha-sdk.min.js"
+[CONF DATA] css: "/pr/auto-build/v1.0.4-206/style.min.css"
+[CONF DATA] domains: ["castatic.fengkongcloud.cn","castatic.fengkongcloud.com","castatic-a.fengkongcloud.com","castatic2.fengkongcloud.com"]
+initSMCaptcha ok
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[SCRIPT] https://castatic.fengkongcloud.cn/pr/auto-build/v1.0.4-206/captcha-sdk.min.js
+[SCRIPT] sdk v1.0.4-206 injecting via w.eval...
+[HOOK] window.SMCaptcha defined, type: function
+[HOOK] SMCaptcha set complete
+[SCRIPT] sdk eval returned: function
+[SCRIPT] SMCaptcha: function
+[SCRIPT] SMCaptcha.prototype methods: ["appendTo","bindForm","getValidate","getResult","reset","disableCaptcha","enableCaptcha","verify","onReady","onSuccess","onError","onClose","resetSuccessCallback","closePopup"]
+[SCRIPT] manual readystatechange: conf
+[SCRIPT] manual onload: conf
+[SCRIPT] manual readystatechange: captcha-sdk
+[SCRIPT] manual onload: captcha-sdk
+[HOOK] new SMCaptcha() called with 1 args
+[HOOK] config saved to config_snapshot.json
+[HOOK] config apiConf: object
+[HOOK] apiConf keys: [ 'css', 'domains', 'js' ]
+[HOOK] apiConf.css: /pr/auto-build/v1.0.4-206/style.min.css
+[HOOK] apiConf.js: /pr/auto-build/v1.0.4-206/captcha-sdk.min.js
+[HOOK] apiConf.detail: none
+[LINK] css href set: ongcloud.cn/pr/auto-build/v1.0.4-206/style.min.css
+[LINK] css href set: ongcloud.cn/pr/auto-build/v1.0.4-206/font/font.css
+[HOOK] SMCaptcha constructor returned, keys: ["captchaUuid","_config","_captcha"]
+[HOOK] this._captcha: function
+[HOOK] _captcha is FUNCTION
+[HOOK] _captcha.prototype own: []
+[HOOK] _captcha.prototype all: []
+[HOOK] _captcha.prototype length: 0
+
+[INSTANCE READY] own keys: ["captchaUuid","_config","_captcha"]
+[DIAG] inst for..in keys: ["captchaUuid","_config","_captcha","appendTo","bindForm","getValidate","getResult","reset","disableCaptcha","enableCaptcha","verify","onReady","onSuccess","onError","onClose","resetSuccessCallback","closePopup"]
+[DIAG] _captcha type: function
+[DIAG] _captcha.prototype keys: []
+[DIAG] _captcha.prototype all: []
+[DIAG] _config: ["_successCallback","domains","registerUrl","fVerifyUrl","fVerifyUrlV2","captchaTypeDomains","captchaTypeUrl","confUrl","logUrl","logDisabled","appendTo","customData","disabled","mode","modeArr","noSupportModeArr","langArr","product","productArr","https","width","appId","channel","floatImagePosition","VERSION","SDKVER","maskBindClose","lang","useBrowserLang","debug","trackerDomain","trackerPath","maxRetryCount","style","os","tipsMessage","organization","captchaUuid","startRequestTime","apiConf"]
+[DIAG] floatCtn innerHTML len: 0
+[DIAG] floatCtn children: 0
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[LINK] manual onload: css
+[LINK] manual onload: css
+[SCRIPT] https://captcha1.fengkongcloud.cn/ca/v1/register?data=%7B%7D&sdkver=1.1.3&callback=sm_1779175955334&rversion=1.0.4&captchaUuid=20260519153231fBaDzbkYnDeZzFeaF2&
+[SCRIPT] syncing register...
+[SCRIPT] reg body: sm_1779175955334({"code":1100,"message":"success","requestId
+[REG DATA] rid: 2026051915323764c0d3835fff493b1c
+[CONSOLE-LOG] %c {} {}
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[SCRIPT] manual readystatechange: register
+[SCRIPT] manual onload: register
+
+=== TRIGGER sequence ===
+[DIAG] floatCtn after wait: 2658
+[DIAG] floatCtn after show: 2658
+[TRY] inst.verify()...
+[PROXY-verify] called
+[PROXY-verify] _captcha type: object
+[PROXY-verify] _captcha methods: ["fixConfig","getSlideDefaultHtml","getInsensitiveDefaultHtml","getAutoSlideDefaultHtml","getSelectDefaultHtml","getSlidePopupHtml","getAutoSlidePopupHtml","getSelectPopupHtml","getPopupHtml","getDefaultHtml","buildTpl","initDom","setCustomFont","setCustomStyle","setFirstRootDom","setDomStyle","smGetElByClassName","smGetIdString","smGetElById","getMainDom","fixProduct","fixSize","setRootDom","getRootDom","getMouseAction","getEncryptContent","getSafeParams","checkApi","sendRequest","getOs","getFullPageData","getInsensitiveCaTypeApi","isRegisterInvalid","setRegisterData","getRegisterData","clearClassStatus","setImageUrl","updateTplStatus","excuteCallback","imagesLoaded","_errorCallback","registCaptcha","setImgUrl","refreshHandler","getMousePos","saveMouseData","startHandler","resetPosition","moveHandler","setResult","getResult","resetForm","bindForm","fixProductSuccessStatus","changeRefreshBtnStatus","updateAnswerHtml","endHandler","initFreshEvent","fixSuccessSize","initOnceEvent","fpKeyboardHandler","fpMouseClickHandler","fpMousemoveHandler","closePanelEvent","initEvent","overHandler","outHandler","closeHandler","stopPropagation","preventDefaultHandler","changePannelStatus","changeImageStatus","floatOverHandler","floatOutHandler","clearEvent","selectHandler","showCaptcha","insensitiveHandlerCallback","insensitiveHandler","saveEventList","saveFullPageData","cellectFullPageData","init"]
+[TRY] inst.verify() OK
+[DRAG] _data layout dimensions forcibly set
+[DIAG] context methods: {"saveFullPageData":"function","cellectFullPageData":"function","collectFullPageData":"undefined","getMouseAction":"function","getEncryptContent":"function","getResult":"function","sendRequest":"function"}
+[DRAG] startHandler: true moveHandler: true endHandler: true
+[DRAG] getEncryptContent: true getResult: true sendRequest: true
+[DRAG] hooked handlers: []
+[DRAG] calling saveFullPageData...
+[DRAG] saveFullPageData OK
+[DRAG] cellectFullPageData OK
+[DRAG] _data dimensions re-forced after init
+[DRAG] calling gap_detect.py...
+[DRAG] gap_detect.py: CONF:0.5346 method:ccorr bg_w:600
+[DRAG] Python OpenCV gap: 55px
+[DIAG] trajectory: {"steps":28,"totalDelta":55,"minDelta":-2.19,"maxDelta":21.17,"zeroDeltaCount":0,"negativeDeltaCount":22}
+[DRAG] dom candidate: {"tag":"DIV","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_wrapper","cls":"shumei_captcha shumei_captcha_wrapper product-float mode-slide","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"I","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_fail_refresh_btn","cls":"shumei_captcha_fail_refresh_btn","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"DIV","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_img_refresh_btn","cls":"shumei_captcha_img_refresh_btn shumei_hide","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"DIV","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_slide_wrapper","cls":"shumei_captcha_slide_wrapper","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"DIV","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_slide_process","cls":"shumei_captcha_slide_process","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"DIV","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_slide_tips_wrapper","cls":"shumei_captcha_slide_tips_wrapper","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"DIV","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_slide_tips","cls":"shumei_captcha_slide_tips","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"DIV","id":"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei_captcha_slide_btn","cls":"shumei_captcha_slide_btn","rect":{"w":0,"h":0}}
+[DRAG] dom candidate: {"tag":"I","id":"","cls":"shumei_captcha_slide_btn_icon sm-iconfont","rect":{"w":0,"h":0}}
+[DRAG] slideBtnEl found: true DIV.shumei_captcha shumei_captcha_wrapper product-float mode
+[DRAG] startHandler...
+[EVENT-startHandler] type=mousedown clientX=10 clientY=75 buttons=1 which=1
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[EVENT-startHandler] type=touchstart clientX=10 clientY=75 buttons=1 which=1
+[DRAG] startHandler OK
+[EVENT-moveHandler #1] x=14.530000000000001 y=76.11852811804042 type=mousemove
+[EVENT-moveHandler #2] x=14.530000000000001 y=76.11852811804042 type=touchmove
+[EVENT-moveHandler #3] x=19.060000000000002 y=76.48976152376082 type=mousemove
+[EVENT-moveHandler #4] x=19.060000000000002 y=76.48976152376082 type=touchmove
+[EVENT-moveHandler #5] x=33.21 y=79.79112714598295 type=mousemove
+[EVENT-moveHandler #6] x=33.21 y=79.79112714598295 type=touchmove
+[EVENT-moveHandler #7] x=47.36 y=77.20587121781415 type=mousemove
+[EVENT-moveHandler #8] x=47.36 y=77.20587121781415 type=touchmove
+[EVENT-moveHandler #9] x=68.53 y=75.75048425193434 type=mousemove
+[EVENT-moveHandler #10] x=68.53 y=75.75048425193434 type=touchmove
+[EVENT-moveHandler #11] x=89.7 y=78.74271625941077 type=mousemove
+[EVENT-moveHandler #12] x=89.7 y=78.74271625941077 type=touchmove
+[EVENT-moveHandler #13] x=88.72 y=78.75036677761027 type=mousemove
+[EVENT-moveHandler #14] x=88.72 y=78.75036677761027 type=touchmove
+[EVENT-moveHandler #15] x=87.74 y=74.2215911473731 type=mousemove
+[EVENT-moveHandler #16] x=87.74 y=74.2215911473731 type=touchmove
+[EVENT-moveHandler #17] x=86.00999999999999 y=74.78125567764096 type=mousemove
+[EVENT-moveHandler #18] x=86.00999999999999 y=74.78125567764096 type=touchmove
+[EVENT-moveHandler #19] x=84.27999999999999 y=78.03670508688155 type=mousemove
+[EVENT-moveHandler #20] x=84.27999999999999 y=78.03670508688155 type=touchmove
+[EVENT-moveHandler #21] x=83.46 y=77.1260953029373 type=mousemove
+[EVENT-moveHandler #22] x=83.46 y=77.1260953029373 type=touchmove
+[EVENT-moveHandler #23] x=82.64 y=70.61477953768109 type=mousemove
+[EVENT-moveHandler #24] x=82.64 y=70.61477953768109 type=touchmove
+[EVENT-moveHandler #25] x=82.52 y=74.96824357191468 type=mousemove
+[EVENT-moveHandler #26] x=82.52 y=74.96824357191468 type=touchmove
+[EVENT-moveHandler #27] x=82.39999999999999 y=70.45237836905314 type=mousemove
+[EVENT-moveHandler #28] x=82.39999999999999 y=70.45237836905314 type=touchmove
+[EVENT-moveHandler #29] x=80.74999999999999 y=71.00280097250305 type=mousemove
+[EVENT-moveHandler #30] x=80.74999999999999 y=71.00280097250305 type=touchmove
+[EVENT-moveHandler #31] x=79.61999999999999 y=73.92979200298227 type=mousemove
+[EVENT-moveHandler #32] x=79.61999999999999 y=73.92979200298227 type=touchmove
+[EVENT-moveHandler #33] x=78.49 y=74.14684067991847 type=mousemove
+[EVENT-moveHandler #34] x=78.49 y=74.14684067991847 type=touchmove
+[EVENT-moveHandler #35] x=77.00999999999999 y=71.53152464177312 type=mousemove
+[EVENT-moveHandler #36] x=77.00999999999999 y=71.53152464177312 type=touchmove
+[EVENT-moveHandler #37] x=75.52999999999999 y=79.59645417921936 type=mousemove
+[EVENT-moveHandler #38] x=75.52999999999999 y=79.59645417921936 type=touchmove
+[EVENT-moveHandler #39] x=73.33999999999999 y=73.796044232768 type=mousemove
+[EVENT-moveHandler #40] x=73.33999999999999 y=73.796044232768 type=touchmove
+[EVENT-moveHandler #41] x=71.14999999999999 y=78.88769562823197 type=mousemove
+[EVENT-moveHandler #42] x=71.14999999999999 y=78.88769562823197 type=touchmove
+[EVENT-moveHandler #43] x=69.22999999999999 y=70.59267586809824 type=mousemove
+[EVENT-moveHandler #44] x=69.22999999999999 y=70.59267586809824 type=touchmove
+[EVENT-moveHandler #45] x=67.30999999999999 y=79.82694875092176 type=mousemove
+[EVENT-moveHandler #46] x=67.30999999999999 y=79.82694875092176 type=touchmove
+[EVENT-moveHandler #47] x=66.82 y=75.52437600594627 type=mousemove
+[EVENT-moveHandler #48] x=66.82 y=75.52437600594627 type=touchmove
+[EVENT-moveHandler #49] x=66.32999999999998 y=74.08516182756726 type=mousemove
+[EVENT-moveHandler #50] x=66.32999999999998 y=74.08516182756726 type=touchmove
+[EVENT-moveHandler #51] x=65.75999999999999 y=75.73067482235209 type=mousemove
+[EVENT-moveHandler #52] x=65.75999999999999 y=75.73067482235209 type=touchmove
+[EVENT-moveHandler #53] x=65.18999999999998 y=76.31213946135698 type=mousemove
+[EVENT-moveHandler #54] x=65.18999999999998 y=76.31213946135698 type=touchmove
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[EVENT-moveHandler #55] x=64.96999999999998 y=77.95406934216544 type=mousemove
+[EVENT-moveHandler #56] x=64.96999999999998 y=77.95406934216544 type=touchmove
+[DRAG] final X: 64.96999999999998
+[DRAG] getMouseAction keys: ["wi","gq","vs","lx","es","act.os","jq","zm","tx"]
+[DRAG]   wi: string = MOT4MHDt7Gw=
+[DRAG]   gq: string = rpcTXBNz9Tw1j+FcbCI3899HpIQHhyZmJQFjboCetem+c7iVRQLqbl051k8xkuPkYJzu8+xHsgFVwLMvcvQFQjUZ8GW/ULG3bDBHWW+HZ2uWoTxOuIp0c6GhP+3rsL9uYsyaDB+0ePDMZCdd75AjLcgGOgesE14mEoTtzR60BkaFtZc45wGgnqrBVYZHL4nxPuBOqQGK1gFDZEMRrf4Vmh1VgnwX63joxmDo1h/q4j0ErS6bkfOLruTZ+ncQsouQO1I6n7jyOULBgx7GDn2VV0F38WkPiq3OYlhNOa/O4qQShO3NHrQGRkXjk/DONVbctfk1uq63YXoQkdsPvnLMIc7WBsIpnR/lvT8Vii1SGTs5jP12FBDm6YnoqYgwI6XdAkhHm+ubzVHoK04qO5c0lJIuyvc+IfkcEoTtzR60BkawcG66Yt7UcxsjKwYgtRvwAeJipKx7/qEYxY0ya70trF0D6ZwwSKdUt7jgJ1K/fxBZSCv22IeoDq7xBhcprui62+ZyAXvKkiIrvbPgZViA1BKE7c0etAZGqMp4a6X5nywF6QzRa6ncwGUiadUT+P+9qeOdQDWoez4ShO3NHrQGRvCYGYbnNCxgtA3+3jnQFefUR+YzsFdikvWZ691RA3Bv
+[DRAG]   vs: string = kpTHYydkSUE=
+[DRAG]   lx: string = ijWgh1NEB5U=
+[DRAG]   es: string = BUvWMp6vHgY=
+[DRAG]   act.os: string = web_pc
+[DRAG]   jq: string = 8CCvePk2kf8=
+[DRAG]   zm: string = xvOnP7cIIcY=
+[DRAG]   tx: string = IySHsM4F7h4=
+[DRAG] mouse_action_dump.json saved
+[DRAG] _data.selectData: []
+[DRAG] _data.selectPosData: []
+[DRAG] _isMoving: true
+[DRAG] _currentStatus: default
+[DRAG] _data keys: ["selectData","selectPosData","errMsg","uuid","refreshHandler","startHandler","moveHandler","endHandler","outHandler","overHandler","closeHandler","preventDefaultHandler","floatOutHandler","floatOverHandler","selectHandler","insensitiveHandler","firstRootDomWidth","rootDom","trueWidth","trueHeight","trueUnit","slideWidth","beforeResizeWidth","startTime","mousemoveDataTimer","mouseLeftClickDataTimer","mouseRightClickDataTimer","keyboardDataTimer","registerData","registerApiInvalid","mousemoveData","mouseLeftClickData","mouseRightClickData","keyboardData","mouseStartX","mouseStartY","blockWidth","mouseData","intervalTimer","mouseMoveX","mouseMoveY","__key"]
+[DRAG]   _data.errMsg: {"loading":"图片加载中...","js":"JS-SDK资源加载失败","css":"CSS资源加载失败","img":"图片资源加载失败","conf":"获取配置参数异常","network":"网络请求异常","errorTips":"当前网络不佳, 请刷新重试","selectPlaceholder":"请依次点击","selectSeqPlaceholder":"请按成语顺序点击","insensitivePlaceholder":"点击完成验证","success":"<i id=\"e6474677-8406-40c0-97cc-a8eb9cf60e7c-shumei
+[DRAG]   _data.uuid: e6474677-8406-40c0-97cc-a8eb9cf60e7c
+[DRAG]   _data.refreshHandler: function () { [native code] }
+[DRAG]   _data.startHandler: function () { [native code] }
+[DRAG]   _data.moveHandler: function () { [native code] }
+[DRAG]   _data.endHandler: function () { [native code] }
+[DRAG]   _data.outHandler: function () { [native code] }
+[DRAG]   _data.overHandler: function () { [native code] }
+[DRAG]   _data.closeHandler: function () { [native code] }
+[DRAG]   _data.preventDefaultHandler: function () { [native code] }
+[DRAG]   _data.floatOutHandler: function () { [native code] }
+[DRAG]   _data.floatOverHandler: function () { [native code] }
+[DRAG]   _data.selectHandler: function () { [native code] }
+[DRAG]   _data.insensitiveHandler: function () { [native code] }
+[DRAG]   _data.firstRootDomWidth: 300
+[DRAG]   _data.trueWidth: 260
+[DRAG]   _data.trueHeight: 150
+[DRAG]   _data.trueUnit: px
+[DRAG]   _data.slideWidth: 260
+[DRAG]   _data.beforeResizeWidth: 260
+[DRAG]   _data.startTime: 1779175959066
+[DRAG]   _data.mousemoveDataTimer: 24
+[DRAG]   _data.mouseLeftClickDataTimer: 25
+[DRAG]   _data.mouseRightClickDataTimer: 26
+[DRAG]   _data.keyboardDataTimer: 27
+[DRAG]   _data.registerData: {"bg":"/crb/set-20220315/v2/b4e4ac6096621fb6b1b56a1c8e9b5556_bg.jpg","bg_height":300,"bg_width":600,"domains":["castatic.fengkongcloud.cn","castatic.fengkongcloud.com","castatic-a.fengkongcloud.com","castatic2.fengkongcloud.com"],"fg":"/crb/set-20220315/v2/b4e4ac6096621fb6b1b56a1c8e9b5556_fg.png","k
+[DRAG]   _data.registerApiInvalid: false
+[DRAG]   _data.mouseStartX: 10
+[DRAG]   _data.mouseStartY: 75
+[DRAG]   _data.blockWidth: 34.66666666666667
+[DRAG]   _data.mouseData: [[0,0,0],[9.060000000000002,1.4897615237608193,109],[37.36,2.205871217814149,216],[79.7,3.74271625941077,325],[76.00999999999999,-0.2187443223590435,434],[73.46,2.1260953029373013,543],[72.52,-0.0317564280853162,653],[69.61999999999999,-1.0702079970177323,762],[67.00999999999999,-3.4684753582268826,
+[DRAG]   _data.intervalTimer: 28
+[DRAG]   _data.mouseMoveX: 54.969999999999985
+[DRAG]   _data.mouseMoveY: 2.9540693421654396
+[DRAG]   _data.__key: 6e6d0b0b
+[DRAG] saveEventList() returns: undefined
+[DRAG] saveEventList: undefined
+[EVENT-endHandler] type=mouseup clientX=64.96999999999998 clientY=77.95406934216544 buttons=0 which=1
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[SCRIPT] https://captcha1.fengkongcloud.cn/ca/v2/fverify?organization=RlokQwRlVjUrTUlkIqOg&ostype=web&gq=rpcTXBNz9Tw1j%2BFcbCI3899HpIQHhyZmJQFjboCetem%2Bc7iVRQLqbl051k8x
+
+========================================
+[FVERIFY JSONP CAPTURED!]
+[FVERIFY] Full URL: https://captcha1.fengkongcloud.cn/ca/v2/fverify?organization=RlokQwRlVjUrTUlkIqOg&ostype=web&gq=rpcTXBNz9Tw1j%2BFcbCI3899HpIQHhyZmJQFjboCetem%2Bc7iVRQLqbl051k8xkuPkYJzu8%2BxHsgFVwLMvcvQFQjUZ8GW%2FULG3bDBHWW%2BHZ2uWoTxOuIp0c6GhP%2B3rsL9uYsyaDB%2B0ePDMZCdd75AjLcgGOgesE14mEoTtzR60BkaFtZc45wGgnqrBVYZHL4nxPuBOqQGK1gFDZEMRrf4Vmh1VgnwX63joxmDo1h%2Fq4j0ErS6bkfOLruTZ%2BncQsouQO1I6n7jyOULBgx7GDn2VV0F38WkPiq3OYlhNOa%2FO4qQShO3NHrQGRkXjk%2FDONVbctfk1uq63YXoQkdsPvnLMIc7WBsIpnR%2FlvT8Vii1SGTs5jP12FBDm6YnoqYgwI6XdAkhHm%2BubzVHoK04qO5c0lJIuyvc%2BIfkcEoTtzR60BkawcG66Yt7UcxsjKwYgtRvwAeJipKx7%2FqEYxY0ya70trF0D6ZwwSKdUt7jgJ1K%2FfxBZSCv22IeoDq7xBhcprui62%2BZyAXvKkiIrvbPgZViA1BKE7c0etAZGqMp4a6X5nywF6QzRa6ncwGUiadUT%2BP%2B9qeOdQDWoez4ShO3NHrQGRvCYGYbnNCxgtA3%2B3jnQFefUR%2BYzsFdikvWZ691RA3Bv&ww=Jb8QeO9Hoio%3D&bb=ZLCbn3Vwpro%3D&captchaUuid=20260519153231fBaDzbkYnDeZzFeaF2&rid=2026051915323764c0d3835fff493b1c&vj=9fE3gOSP64o%3D&wi=0P4TLpLHq%2F2TjAfWSDMVYSQg%2Bdma4cym&sdkver=1.1.3&hq=3TYphsLXy2Y%3D&lx=ijWgh1NEB5U%3D&callback=sm_1779175962248&vs=IhRoczXZc2Y%3D&protocol=206&rversion=1.0.4&es=BUvWMp6vHgY%3D&act.os=web_pc&zm=xvOnP7cIIcY%3D&tx=IySHsM4F7h4%3D&jq=8CCvePk2kf8%3D
+[FVERIFY RESPONSE] code: 1100 message: success riskLevel: PASS
+========================================
+[EVENT-endHandler] type=touchend clientX=64.96999999999998 clientY=77.95406934216544 buttons=1 which=1
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[XHR] POST https://captcha1.fengkongcloud.cn/ca/v1/log
+[SCRIPT] https://captcha1.fengkongcloud.cn/ca/v2/fverify?callback=sm_1779175968363&bb=ZLCbn3Vwpro%3D&ww=Jb8QeO9Hoio%3D&captchaUuid=20260519153231fBaDzbkYnDeZzFeaF2&act.o
+[EVENT-fpMouseClickHandler] type=click clientX=64.96999999999998 clientY=77.95406934216544 buttons=1 which=1
+[DRAG] endHandler OK
+
+DONE fverify! waiting 2s for diagnostics...
+[DRAG] POST-END _data.selectData: []
+[DRAG] POST-END _isMoving: false
+[DRAG] POST-END _currentStatus: default
+[DRAG] POST-END _data.mouseMoveX: 54.969999999999985
+[DRAG] POST-END _data.blockWidth: 34.66666666666667
+[DRAG] POST-END expected slide pos: 225.33333333333331
+[DRAG] getEncryptContent result: string "CnY5Ah93u3aY8wqVbeOyvg=="
+[DRAG] getResult: {"rid":"","pass":false}

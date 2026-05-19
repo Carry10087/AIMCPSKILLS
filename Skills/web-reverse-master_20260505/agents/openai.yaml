@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Reverse Master"
+  short_description: "授权 Web/JS 逆向工作流与可测脚本"
+  default_prompt: "Use $web-reverse-master to analyze an authorized Web/JS signing or browser-environment issue and produce evidence-backed deliverables."

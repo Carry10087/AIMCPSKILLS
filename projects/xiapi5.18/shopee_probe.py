@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import concurrent.futures
 import json
 import os
 import re
@@ -112,24 +111,20 @@ def find_debug_port(preferred_port: int | None = None) -> int | None:
 
     def _check(port: int) -> int | None:
         try:
-            response = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=0.08)
+            response = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=0.2)
             if response.ok and "webSocketDebuggerUrl" in response.text:
                 return port
         except Exception:
             return None
         return None
 
-    candidates = [
+    candidates: list[int | None] = [
         preferred_port,
         _DEBUG_PORT_CACHE,
         _int_or_none(os.getenv("BROWSER_DEBUG_PORT")),
         _int_or_none(os.getenv("ADSPOWER_DEBUG_PORT")),
-        9222,
-        9223,
-        9224,
-        9225,
-        9226,
     ]
+    candidates.extend(range(9222, 9231))
     checked: set[int] = set()
     for candidate in candidates:
         port = _int_or_none(candidate)
@@ -141,13 +136,6 @@ def find_debug_port(preferred_port: int | None = None) -> int | None:
             with _DEBUG_PORT_LOCK:
                 _DEBUG_PORT_CACHE = result
             return result
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
-        for result in executor.map(_check, range(55900, 65536)):
-            if result is not None:
-                with _DEBUG_PORT_LOCK:
-                    _DEBUG_PORT_CACHE = result
-                return result
     return None
 
 

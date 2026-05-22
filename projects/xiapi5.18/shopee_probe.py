@@ -1,317 +1,508 @@
 #!/usr/bin/env python3
-"""Small Shopee Taiwan product probe.
+"""Shopee SSR browser probe.
 
-This is a single-product verifier for the task flow in Rules.txt. It fetches
-public product detail data and saves the raw get_pc response that can be used
-as taskResult later.
+Connects to an already-open Chrome/AdsPower CDP session, opens a product page,
+and extracts cachedMap from the rendered page HTML.
 """
 
 from __future__ import annotations
 
 import argparse
-import http.cookiejar
+import asyncio
+import concurrent.futures
 import json
+import os
 import re
 import sys
-import time
-import urllib.error
+import threading
 import urllib.parse
-import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
+import requests
 
 BASE_HOST = "https://shopee.tw"
-GET_PC_ENDPOINT = f"{BASE_HOST}/api/v4/pdp/get_pc"
-DEFAULT_TIMEOUT = 20
-ENDPOINTS = ("get_pc", "get_rw", "item_get")
+DEFAULT_TIMEOUT = 15
+_DEBUG_PORT_CACHE: int | None = None
+_DEBUG_PORT_LOCK = threading.Lock()
+
+SSR_EXTRACT_JS = """
+() => {
+    const result = {};
+
+    if (window.DOMAIN_PDP_DATA && window.DOMAIN_PDP_DATA.cachedMap) {
+        result.cachedMap = window.DOMAIN_PDP_DATA.cachedMap;
+        result.source = 'DOMAIN_PDP_DATA';
+        return result;
+    }
+
+    const html = document.documentElement.outerHTML;
+    const marker = '"cachedMap":';
+    const markerPos = html.indexOf(marker);
+    if (markerPos >= 0) {
+        const braceStart = html.indexOf('{', markerPos + marker.length);
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let index = braceStart; index < html.length; index++) {
+            const char = html[index];
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (char === '\\\\') escaped = true;
+                else if (char === '"') inString = false;
+                continue;
+            }
+            if (char === '"') inString = true;
+            else if (char === '{') depth++;
+            else if (char === '}') {
+                depth--;
+                if (depth === 0) {
+                    try {
+                        result.cachedMap = JSON.parse(html.substring(braceStart, index + 1));
+                        result.source = 'html_parse';
+                    } catch (error) {
+                        result.rawText = html.substring(braceStart, index + 1);
+                        result.parseError = error.message;
+                        result.source = 'html_raw';
+                    }
+                    return result;
+                }
+            }
+        }
+    }
+
+    result.source = 'none';
+    result.url = location.href;
+    result.textPreview = document.body ? document.body.innerText.slice(0, 500) : '';
+    return result;
+}
+"""
+
+
+def product_url(shop_id: int, item_id: int) -> str:
+    return f"{BASE_HOST}/product/{shop_id}/{item_id}"
+
+
+def parse_product_ids(value: str) -> tuple[int, int]:
+    text = urllib.parse.unquote(value.strip())
+    for pat in [
+        r"(?:^|[^\w])i\.(?P<shop_id>\d+)\.(?P<item_id>\d+)(?:[^\d]|$)",
+        r"/product/(?P<shop_id>\d+)/(?P<item_id>\d+)(?:[^\d]|$)",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            return int(m.group("shop_id")), int(m.group("item_id"))
+    parsed = urllib.parse.urlparse(text)
+    q = urllib.parse.parse_qs(parsed.query)
+    if "shop_id" in q and "item_id" in q:
+        return int(q["shop_id"][0]), int(q["item_id"][0])
+    raise RuntimeError("无法从链接中找到 shop_id/item_id")
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if port > 0 else None
+
+
+def find_debug_port(preferred_port: int | None = None) -> int | None:
+    global _DEBUG_PORT_CACHE
+
+    def _check(port: int) -> int | None:
+        try:
+            response = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=0.08)
+            if response.ok and "webSocketDebuggerUrl" in response.text:
+                return port
+        except Exception:
+            return None
+        return None
+
+    candidates = [
+        preferred_port,
+        _DEBUG_PORT_CACHE,
+        _int_or_none(os.getenv("BROWSER_DEBUG_PORT")),
+        _int_or_none(os.getenv("ADSPOWER_DEBUG_PORT")),
+        9222,
+        9223,
+        9224,
+        9225,
+        9226,
+    ]
+    checked: set[int] = set()
+    for candidate in candidates:
+        port = _int_or_none(candidate)
+        if port is None or port in checked:
+            continue
+        checked.add(port)
+        result = _check(port)
+        if result is not None:
+            with _DEBUG_PORT_LOCK:
+                _DEBUG_PORT_CACHE = result
+            return result
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+        for result in executor.map(_check, range(55900, 65536)):
+            if result is not None:
+                with _DEBUG_PORT_LOCK:
+                    _DEBUG_PORT_CACHE = result
+                return result
+    return None
+
+
+def _price(v: Any) -> str | None:
+    if v is None or v == -1:
+        return None
+    try:
+        return f"{int(v) / 100000:.2f}"
+    except Exception:
+        return None
+
+
+def _txt(v: Any, n: int = 200) -> str | None:
+    if not isinstance(v, str):
+        return None
+    v = re.sub(r"\s+", " ", v).strip()
+    return v if len(v) <= n else v[: n - 3] + "..."
+
+
+def _price_field(value: Any, *keys: str) -> Any:
+    if not isinstance(value, dict):
+        return value
+    for key in keys:
+        found = value.get(key)
+        if found not in (None, -1):
+            return found
+    return None
+
+
+def summarize(store: dict[str, Any]) -> dict[str, Any]:
+    item = store.get("item") or {}
+    pp = store.get("product_price") or {}
+    review = store.get("product_review") or {}
+    shop = store.get("shop_detailed") or {}
+    images_data = store.get("product_images") or {}
+    images = images_data.get("images") or []
+    models = item.get("models") or []
+    pm = pp.get("price_model") or {}
+    price_box = pp.get("price")
+    price_twd = _price(item.get("price") or _price_field(price_box, "single_value", "range_min", "range_max") or pp.get("price"))
+    price_min_twd = _price(item.get("price_min") or _price_field(price_box, "range_min", "single_value") or pp.get("price_min"))
+    price_max_twd = _price(item.get("price_max") or _price_field(price_box, "range_max", "single_value") or pp.get("price_max"))
+    has_price = any((price_twd, price_min_twd, price_max_twd))
+
+    return dict(
+        has_real_data=bool(item),
+        has_price=has_price,
+        shopee_error=None,
+        shopee_error_msg=None,
+        item_id=item.get("item_id"),
+        shop_id=item.get("shop_id"),
+        title=item.get("title"),
+        currency=item.get("currency"),
+        brand=item.get("brand"),
+        price_twd=price_twd,
+        price_min_twd=price_min_twd,
+        price_max_twd=price_max_twd,
+        stock=next((m.get("stock") for m in models if m.get("stock")), item.get("stock")),
+        normal_stock=next((m.get("normal_stock") for m in models if m.get("normal_stock")), item.get("normal_stock")),
+        models=len(models),
+        images=len(images),
+        rating_star=review.get("rating_star") or (item.get("item_rating") or {}).get("rating_star"),
+        total_rating_count=(review.get("total_rating_count") or (item.get("item_rating") or {}).get("total_rating_count")),
+        liked_count=review.get("liked_count"),
+        shop_name=shop.get("name"),
+        shop_location=shop.get("shop_location") or item.get("shop_location"),
+        description_preview=_txt(item.get("description") or store.get("product_description", {}).get("description")),
+        review_count=review.get("cmt_count") or 0,
+        price_model_id=pm.get("price_single_model_id"),
+        source="ssr_cachedMap",
+    )
+
+
+def write_json(path: str, value: Any) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 class ProbeError(RuntimeError):
     pass
 
 
-def configure_stdout() -> None:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-
-
-def parse_product_ids(value: str) -> tuple[int, int]:
-    """Return (shop_id, item_id) from common Shopee URL formats."""
-    text = urllib.parse.unquote(value.strip())
-
-    patterns = [
-        r"(?:^|[^\w])i\.(?P<shop_id>\d+)\.(?P<item_id>\d+)(?:[^\d]|$)",
-        r"/product/(?P<shop_id>\d+)/(?P<item_id>\d+)(?:[^\d]|$)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            return int(match.group("shop_id")), int(match.group("item_id"))
-
-    parsed = urllib.parse.urlparse(text)
-    params = urllib.parse.parse_qs(parsed.query)
-    if "shop_id" in params and "item_id" in params:
-        return int(params["shop_id"][0]), int(params["item_id"][0])
-
-    raise ProbeError(
-        "Cannot find shop_id/item_id. Use a URL like "
-        "https://shopee.tw/product/{shop_id}/{item_id} or pass --shop-id/--item-id."
-    )
-
-
-def public_product_url(shop_id: int, item_id: int) -> str:
-    return f"{BASE_HOST}/product/{shop_id}/{item_id}"
-
-
-def shopee_price(value: Any) -> str | None:
-    if value is None or value == -1:
-        return None
-    try:
-        return f"{int(value) / 100000:.2f}"
-    except (TypeError, ValueError):
-        return None
-
-
-def compact_text(value: Any, limit: int = 200) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = re.sub(r"\s+", " ", value).strip()
-    if len(value) <= limit:
-        return value
-    return value[: limit - 3] + "..."
-
-
 class ShopeeProbe:
-    def __init__(self, timeout: int = DEFAULT_TIMEOUT) -> None:
-        self.timeout = timeout
-        self.cookiejar = http.cookiejar.CookieJar()
-        self.opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(self.cookiejar)
-        )
-
-    def request(
+    def __init__(
         self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        allow_http_error: bool = False,
-    ) -> tuple[int, bytes]:
-        request_headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"
-            ),
-            "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
-            "Connection": "close",
-        }
-        if headers:
-            request_headers.update(headers)
+        timeout: int = DEFAULT_TIMEOUT,
+        debug_port: int | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+    ):
+        self.timeout = timeout
+        self._debug_port: int | None = debug_port
+        self._browser: Any | None = None
+        self._page: Any | None = None
+        self._loop = loop
+        self._own_loop = loop is None
+        self._closed = False
 
-        request = urllib.request.Request(url, headers=request_headers)
-        try:
-            with self.opener.open(request, timeout=self.timeout) as response:
-                return response.status, response.read()
-        except urllib.error.HTTPError as exc:
-            error_bytes = exc.read()
-            body = error_bytes.decode("utf-8", errors="replace")[:500]
-            if allow_http_error:
-                return exc.code, error_bytes
-            raise ProbeError(f"HTTP {exc.code} for {url}: {body}") from exc
-        except urllib.error.URLError as exc:
-            raise ProbeError(f"Network error for {url}: {exc.reason}") from exc
-
-    def warmup(self, referer: str) -> None:
-        """Visit public pages once so Shopee can set ordinary visitor cookies."""
-        for url in (BASE_HOST, referer):
-            try:
-                self.request(url, {"Accept": "text/html,application/xhtml+xml"})
-                time.sleep(0.8)
-            except ProbeError:
-                pass
-
-    def fetch_endpoint(
-        self, endpoint: str, shop_id: int, item_id: int, referer: str
-    ) -> dict[str, Any]:
-        if endpoint == "get_pc":
-            path = "/api/v4/pdp/get_pc"
-            params = {"shop_id": shop_id, "item_id": item_id}
-        elif endpoint == "get_rw":
-            path = "/api/v4/pdp/get_rw"
-            params = {"shop_id": shop_id, "item_id": item_id}
-        elif endpoint == "item_get":
-            path = "/api/v4/item/get"
-            params = {"shopid": shop_id, "itemid": item_id}
+    def _run(self, coro):
+        if self._closed:
+            raise ProbeError("ShopeeProbe 已关闭。")
+        if self._own_loop:
+            if self._loop is None:
+                self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            return self._loop.run_until_complete(coro)
         else:
-            raise ProbeError(f"Unknown endpoint: {endpoint}")
+            # Running inside an existing event loop - use the async method directly
+            raise ProbeError(
+                "请在异步上下文中使用 'await probe.fetch_ssr_async()' 而非 fetch_first_usable()"
+            )
 
-        query = urllib.parse.urlencode(params)
-        url = f"{BASE_HOST}{path}?{query}"
-        status_code, raw = self.request(
-            url,
-            {
-                "Accept": "application/json, text/plain, */*",
-                "Referer": referer,
-                "X-API-SOURCE": "pc",
-                "X-Requested-With": "XMLHttpRequest",
-            },
-            allow_http_error=True,
-        )
-        text = raw.decode("utf-8", errors="replace")
-        try:
-            body = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ProbeError(f"{endpoint} did not return JSON: {text[:500]}") from exc
+    @property
+    def has_session(self) -> bool:
+        return True  # SSR doesn't need login
 
-        return {
-            "endpoint": endpoint,
-            "url": url,
-            "http_status": status_code,
-            "body": body,
-            "raw_text": text,
-        }
+    def warmup(self, page_url: str, full_page: bool = False) -> None:
+        pass  # SSR doesn't need warmup
+
+    def assert_ready(self) -> None:
+        self._run(self._assert_ready_async())
+
+    async def _assert_ready_async(self) -> None:
+        await self._ensure_page()
+
+    def reset_connection(self) -> None:
+        if self._own_loop:
+            self._run(self._disconnect_async())
+        else:
+            self._browser = None
+            self._page = None
+
+    def reopen_page(self, page_url: str) -> None:
+        self._run(self._reopen_page_async(page_url))
+
+    async def _reopen_page_async(self, page_url: str) -> None:
+        await self._disconnect_async()
+        page = await self._ensure_page()
+        await page.goto(page_url, waitUntil="domcontentloaded", timeout=15000)
+
+    def return_home(self, home_url: str) -> None:
+        self._run(self._return_home_async(home_url))
+
+    async def _return_home_async(self, home_url: str) -> None:
+        page = await self._ensure_page()
+        await page.goto(home_url, waitUntil="domcontentloaded", timeout=15000)
 
     def fetch_first_usable(
-        self, endpoints: list[str], shop_id: int, item_id: int, referer: str
+        self, endpoints: Sequence[str], shop_id: int, item_id: int, referer: str,
+        full_page: bool = False,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        attempts = []
-        selected = None
+        return self._run(self._fetch_ssr(shop_id, item_id, referer, full_page=full_page))
 
-        for endpoint in endpoints:
-            fetched = self.fetch_endpoint(endpoint, shop_id, item_id, referer)
-            summary = summarize_get_pc(fetched["body"])
-            attempt = {
-                "endpoint": endpoint,
-                "http_status": fetched["http_status"],
-                "shopee_error": fetched["body"].get("error"),
-                "shopee_error_msg": fetched["body"].get("error_msg"),
-                "has_real_data": summary["has_real_data"],
-                "url": fetched["url"],
+    async def fetch_ssr_async(
+        self, shop_id: int, item_id: int, referer: str, *, full_page: bool = False,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        return await self._fetch_ssr(shop_id, item_id, referer, full_page=full_page)
+
+    async def _ensure_page(self) -> Any:
+        from pyppeteer import connect
+
+        if self._browser is not None and self._page is not None:
+            return self._page
+
+        port = find_debug_port(self._debug_port)
+        if not port:
+            raise ProbeError("未找到可用浏览器 CDP 调试端口。")
+        self._debug_port = port
+        info_url = f"http://127.0.0.1:{port}"
+        version = requests.get(f"{info_url}/json/version", timeout=5).json()
+        ws_url = version["webSocketDebuggerUrl"]
+        browser = await connect(browserWSEndpoint=ws_url)
+        page = await browser.newPage()
+        self._browser = browser
+        self._page = page
+        return page
+
+    async def _fetch_ssr(
+        self, shop_id: int, item_id: int, referer: str, *, full_page: bool = False,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        page = await self._ensure_page()
+        product = referer or product_url(shop_id, item_id)
+        await page.goto(product, waitUntil="domcontentloaded", timeout=15000)
+
+        raw = await page.evaluate(SSR_EXTRACT_JS)
+        source = raw.get("source", "none")
+        store: dict[str, Any] = {}
+
+        if raw.get("cachedMap"):
+            raw_store = raw["cachedMap"].get(f"{shop_id}/{item_id}", {})
+            if isinstance(raw_store, dict):
+                store = raw_store
+        elif raw.get("rawText"):
+            try:
+                parsed = json.loads(raw["rawText"])
+                if isinstance(parsed, dict):
+                    raw_store = parsed.get(f"{shop_id}/{item_id}", {})
+                    if isinstance(raw_store, dict):
+                        store = raw_store
+            except json.JSONDecodeError:
+                pass
+
+        if store:
+            body = {"bff_meta": None, "error": None, "error_msg": None, "data": store}
+        else:
+            current_url = str(raw.get("url") or product)
+            text_preview = str(raw.get("textPreview") or "")
+            error = "SSR_NOT_FOUND"
+            message = f"无法从页面 SSR 提取商品数据 (source={source})"
+            if "/verify/traffic/error" in current_url:
+                error = "SHOPEE_VERIFY_PAGE"
+                message = f"Shopee 当前会话进入验证页: {current_url}。页面提示: {text_preview}"
+            body = {
+                "bff_meta": None,
+                "error": error,
+                "error_msg": message,
+                "data": None,
             }
-            attempts.append(attempt)
-            if selected is None:
-                selected = fetched
-            if summary["has_real_data"] and fetched["http_status"] < 400:
-                return fetched, attempts
-            time.sleep(0.8)
 
-        assert selected is not None
-        return selected, attempts
+        summary = summarize(store) if store else {"has_real_data": False}
+        attempt = {
+            "endpoint": "ssr_cachedMap",
+            "http_status": 200 if store else 500,
+            "shopee_error": body.get("error"),
+            "shopee_error_msg": body.get("error_msg"),
+            "has_real_data": bool(summary.get("has_real_data")),
+            "url": product,
+            "source": source,
+        }
+
+        selected = {
+            "body": body,
+            "http_status": attempt["http_status"],
+            "endpoint": attempt["endpoint"],
+            "url": attempt["url"],
+        }
+        return selected, [attempt]
+
+    async def _disconnect_async(self) -> None:
+        if self._page is not None:
+            try:
+                await self._page.close()
+            except Exception:
+                pass
+            finally:
+                self._page = None
+        if self._browser is not None:
+            try:
+                await self._browser.disconnect()
+            finally:
+                self._browser = None
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            if self._own_loop and self._browser is not None:
+                self._run(self._disconnect_async())
+        finally:
+            if self._own_loop and self._loop is not None:
+                try:
+                    self._loop.close()
+                except Exception:
+                    pass
+            self._closed = True
+            self._browser = None
+            self._page = None
+            self._loop = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
 
 def summarize_get_pc(body: dict[str, Any]) -> dict[str, Any]:
-    data = body.get("data") or {}
-    item = data.get("item") or {}
-    product_price = data.get("product_price") or {}
-    price_box = product_price.get("price") or {}
-    review = data.get("product_review") or {}
-    images = (data.get("product_images") or {}).get("images") or []
-    shop = data.get("shop_detailed") or {}
-    models = item.get("models") or []
-
-    return {
-        "has_real_data": bool(item),
-        "shopee_error": body.get("error"),
-        "shopee_error_msg": body.get("error_msg"),
-        "item_id": item.get("item_id"),
-        "shop_id": item.get("shop_id"),
-        "title": item.get("title"),
-        "currency": item.get("currency"),
-        "brand": item.get("brand"),
-        "price_twd": shopee_price(item.get("price")),
-        "price_min_twd": shopee_price(item.get("price_min") or price_box.get("range_min")),
-        "price_max_twd": shopee_price(item.get("price_max") or price_box.get("range_max")),
-        "stock": item.get("stock"),
-        "normal_stock": item.get("normal_stock"),
-        "models": len(models),
-        "images": len(images),
-        "rating_star": review.get("rating_star"),
-        "total_rating_count": review.get("total_rating_count"),
-        "liked_count": review.get("liked_count"),
-        "shop_name": shop.get("name"),
-        "shop_location": shop.get("shop_location") or item.get("shop_location"),
-        "description_preview": compact_text(item.get("description")),
-    }
+    data = body.get("data") if isinstance(body, dict) else None
+    store = data if isinstance(data, dict) else body if isinstance(body, dict) else {}
+    summary = summarize(store)
+    if isinstance(body, dict):
+        summary["shopee_error"] = body.get("error")
+        summary["shopee_error_msg"] = body.get("error_msg")
+        if body.get("error"):
+            summary["has_real_data"] = False
+    return summary
 
 
-def write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+def public_product_url(shop_id: int, item_id: int) -> str:
+    return product_url(shop_id, item_id)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Probe one public Shopee Taiwan product detail response."
+def configure_stdout() -> None:
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure:
+        reconfigure(encoding="utf-8")
+
+
+ENDPOINTS = ("get_pc",)
+
+
+async def main_async(args: argparse.Namespace) -> int:
+    configure_stdout()
+    probe = ShopeeProbe(
+        timeout=args.timeout,
+        debug_port=args.debug_port or None,
+        loop=asyncio.get_running_loop(),
     )
-    parser.add_argument("url", nargs="?", help="Shopee product URL.")
-    parser.add_argument("--shop-id", type=int, help="Shopee shop_id.")
-    parser.add_argument("--item-id", type=int, help="Shopee item_id.")
-    parser.add_argument(
-        "--out",
-        default="out/last_get_pc.json",
-        help="Where to save the raw get_pc JSON response.",
-    )
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    parser.add_argument(
-        "--endpoint",
-        choices=[*ENDPOINTS, "all"],
-        default="all",
-        help="Which public endpoint to try.",
-    )
-    parser.add_argument(
-        "--no-warmup",
-        action="store_true",
-        help="Skip initial public page visits.",
-    )
-    return parser
+    probe._own_loop = False
+
+    try:
+        shop_id, item_id = args.shop_id, args.item_id
+        referer = product_url(shop_id, item_id)
+
+        fetched, attempts = await probe._fetch_ssr(
+            shop_id, item_id, referer,
+            full_page=False,
+        )
+
+        body = fetched["body"]
+        store = body.get("data") or {}
+        s = summarize(store)
+
+        out_path = args.out
+        write_json(out_path, body)
+        result = dict(
+            ok=s["has_real_data"],
+            source=attempts[0]["endpoint"] if attempts else "none",
+            http_status=fetched["http_status"],
+            input=dict(shop_id=shop_id, item_id=item_id),
+            attempts=attempts,
+            summary=s,
+            raw_response_path=out_path,
+        )
+        write_json(str(Path(out_path).with_name("last_result.json")), result)
+        print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+        return 0 if result["ok"] else 2
+    finally:
+        await probe._disconnect_async()
 
 
 def main(argv: list[str] | None = None) -> int:
-    configure_stdout()
-    args = build_parser().parse_args(argv)
+    p = argparse.ArgumentParser(description="Shopee 台湾商品探测 (SSR 无登录)")
+    p.add_argument("--shop-id", type=int)
+    p.add_argument("--item-id", type=int)
+    p.add_argument("--out", default="out/last_get_pc.json")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.add_argument("--endpoint", nargs="+", default=list(ENDPOINTS))
+    p.add_argument("--debug-port", type=int, default=0)
+    args = p.parse_args(argv)
 
     try:
-        if args.shop_id and args.item_id:
-            shop_id, item_id = args.shop_id, args.item_id
-            referer = args.url or public_product_url(shop_id, item_id)
-        elif args.url:
-            shop_id, item_id = parse_product_ids(args.url)
-            referer = args.url
-        else:
-            raise ProbeError("Pass a product URL or both --shop-id and --item-id.")
-
-        probe = ShopeeProbe(timeout=args.timeout)
-        if not args.no_warmup:
-            probe.warmup(referer)
-
-        endpoints = list(ENDPOINTS) if args.endpoint == "all" else [args.endpoint]
-        fetched, attempts = probe.fetch_first_usable(endpoints, shop_id, item_id, referer)
-        raw_body = fetched["body"]
-        summary = summarize_get_pc(raw_body)
-        out_path = Path(args.out).resolve()
-        write_json(out_path, raw_body)
-
-        result = {
-            "ok": (
-                bool(summary["has_real_data"])
-                and fetched["http_status"] < 400
-                and summary["shopee_error"] is None
-            ),
-            "source": fetched["endpoint"],
-            "http_status": fetched["http_status"],
-            "input": {
-                "shop_id": shop_id,
-                "item_id": item_id,
-                "referer": referer,
-            },
-            "attempts": attempts,
-            "summary": summary,
-            "raw_response_path": str(out_path),
-        }
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result["ok"] else 2
-    except ProbeError as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
+        return asyncio.run(main_async(args))
+    except RuntimeError as exc:
+        print(json.dumps(dict(ok=False, error=str(exc)), ensure_ascii=False, indent=2))
         return 1
 
 

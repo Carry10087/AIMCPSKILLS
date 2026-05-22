@@ -1,0 +1,14 @@
+# Runtime output
+out/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.pid
+
+# PyInstaller temporary files
+*.spec
+
+# Local experiments
+test/

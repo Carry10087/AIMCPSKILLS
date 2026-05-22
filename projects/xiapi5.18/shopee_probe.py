@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -77,6 +78,44 @@ SSR_EXTRACT_JS = """
 }
 """
 
+DOM_PRICE_EXTRACT_JS = r"""
+() => {
+    const priceRe = /\$\s*([0-9][0-9,]*)(?:\s*-\s*\$\s*([0-9][0-9,]*))?/;
+    const matches = [];
+    for (const el of document.querySelectorAll('body *')) {
+        const raw = (el.innerText || el.textContent || '').trim();
+        if (!raw || raw.length > 80 || !raw.includes('$')) continue;
+        const text = raw.replace(/\s+/g, ' ');
+        const match = text.match(priceRe);
+        if (!match) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const style = getComputedStyle(el);
+        if (style.visibility === 'hidden' || style.display === 'none') continue;
+        const fontSize = parseFloat(style.fontSize) || 0;
+        const isRange = Boolean(match[2]);
+        const exactish = text.length <= match[0].length + 8;
+        const score = fontSize * 10 + (isRange ? 120 : 0) + (exactish ? 30 : 0) - Math.max(rect.top, 0) * 0.01;
+        matches.push({
+            text: match[0],
+            min: match[1],
+            max: match[2] || match[1],
+            fontSize,
+            score,
+        });
+    }
+    matches.sort((a, b) => b.score - a.score);
+    return {
+        priceText: matches.length ? matches[0].text : null,
+        minText: matches.length ? matches[0].min : null,
+        maxText: matches.length ? matches[0].max : null,
+        fontSize: matches.length ? matches[0].fontSize : null,
+        score: matches.length ? matches[0].score : null,
+        hits: matches.slice(0, 5).map((match) => match.text),
+    };
+}
+"""
+
 
 def product_url(shop_id: int, item_id: int) -> str:
     return f"{BASE_HOST}/product/{shop_id}/{item_id}"
@@ -106,6 +145,48 @@ def _int_or_none(value: Any) -> int | None:
     return port if port > 0 else None
 
 
+def _devtools_active_ports() -> list[int]:
+    if os.name != "nt":
+        return []
+    script = r"""
+$ports = Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -match 'chrome|msedge|SunBrowser|browser' -and $_.CommandLine -match 'remote-debugging-port' } |
+  ForEach-Object {
+    $cmd = $_.CommandLine
+    $userDir = $null
+    if ($cmd -match '--user-data-dir="([^"]+)"') { $userDir = $matches[1] }
+    elseif ($cmd -match '--user-data-dir=([^\s]+)') { $userDir = $matches[1] }
+    if ($userDir) {
+      $file = Join-Path $userDir 'DevToolsActivePort'
+      if (Test-Path -LiteralPath $file) {
+        Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction SilentlyContinue
+      }
+    }
+  }
+$ports | Sort-Object -Unique
+"""
+    try:
+        startupinfo = None
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            startupinfo=startupinfo,
+        )
+    except Exception:
+        return []
+    ports: list[int] = []
+    for line in result.stdout.splitlines():
+        port = _int_or_none(line.strip())
+        if port is not None:
+            ports.append(port)
+    return ports
+
+
 def find_debug_port(preferred_port: int | None = None) -> int | None:
     global _DEBUG_PORT_CACHE
 
@@ -124,6 +205,7 @@ def find_debug_port(preferred_port: int | None = None) -> int | None:
         _int_or_none(os.getenv("BROWSER_DEBUG_PORT")),
         _int_or_none(os.getenv("ADSPOWER_DEBUG_PORT")),
     ]
+    candidates.extend(_devtools_active_ports())
     candidates.extend(range(9222, 9231))
     checked: set[int] = set()
     for candidate in candidates:
@@ -146,6 +228,67 @@ def _price(v: Any) -> str | None:
         return f"{int(v) / 100000:.2f}"
     except Exception:
         return None
+
+
+def _parse_price_int(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    digits = re.sub(r"[^\d]", "", value)
+    if not digits:
+        return None
+    return int(digits)
+
+
+def _shopee_price_units(value: int | None) -> int | None:
+    if value is None:
+        return None
+    return value * 100000
+
+
+def dom_price_ready(dom_price: Any) -> bool:
+    if not isinstance(dom_price, dict):
+        return False
+    min_twd = _parse_price_int(dom_price.get("minText"))
+    max_twd = _parse_price_int(dom_price.get("maxText"))
+    if min_twd is None or max_twd is None:
+        return False
+    try:
+        font_size = float(dom_price.get("fontSize") or 0)
+        score = float(dom_price.get("score") or 0)
+    except (TypeError, ValueError):
+        font_size = 0
+        score = 0
+    return min_twd != max_twd or font_size >= 24 or score >= 220
+
+
+def apply_dom_price_fallback(store: dict[str, Any], dom_price: Any) -> bool:
+    if not isinstance(dom_price, dict):
+        return False
+    item = store.get("item")
+    if not isinstance(item, dict):
+        return False
+
+    min_twd = _parse_price_int(dom_price.get("minText"))
+    max_twd = _parse_price_int(dom_price.get("maxText"))
+    if min_twd is None or max_twd is None:
+        return False
+
+    min_units = _shopee_price_units(min_twd)
+    max_units = _shopee_price_units(max_twd)
+    item["price_min"] = min_units
+    item["price_max"] = max_units
+    if min_twd == max_twd:
+        item["price"] = min_units
+    else:
+        item["price"] = None
+
+    store["_dom_price_fallback"] = {
+        "source": "dom_text",
+        "price_text": dom_price.get("priceText"),
+        "price_min_twd": min_twd,
+        "price_max_twd": max_twd,
+    }
+    return True
 
 
 def _txt(v: Any, n: int = 200) -> str | None:
@@ -179,6 +322,7 @@ def summarize(store: dict[str, Any]) -> dict[str, Any]:
     price_min_twd = _price(item.get("price_min") or _price_field(price_box, "range_min", "single_value") or pp.get("price_min"))
     price_max_twd = _price(item.get("price_max") or _price_field(price_box, "range_max", "single_value") or pp.get("price_max"))
     has_price = any((price_twd, price_min_twd, price_max_twd))
+    dom_price_fallback = store.get("_dom_price_fallback") or {}
 
     return dict(
         has_real_data=bool(item),
@@ -205,6 +349,8 @@ def summarize(store: dict[str, Any]) -> dict[str, Any]:
         description_preview=_txt(item.get("description") or store.get("product_description", {}).get("description")),
         review_count=review.get("cmt_count") or 0,
         price_model_id=pm.get("price_single_model_id"),
+        price_source="dom_text" if dom_price_fallback else "ssr_cachedMap",
+        dom_price_text=dom_price_fallback.get("price_text") if isinstance(dom_price_fallback, dict) else None,
         source="ssr_cachedMap",
     )
 
@@ -319,10 +465,24 @@ class ShopeeProbe:
         page = await self._ensure_page()
         product = referer or product_url(shop_id, item_id)
         await page.goto(product, waitUntil="domcontentloaded", timeout=15000)
+        try:
+            await page.waitForFunction(
+                "document.body && /\\$\\s*\\d/.test(document.body.innerText)",
+                timeout=3000,
+            )
+        except Exception:
+            pass
 
         raw = await page.evaluate(SSR_EXTRACT_JS)
+        dom_price: Any = {}
+        for _ in range(7):
+            dom_price = await page.evaluate(DOM_PRICE_EXTRACT_JS)
+            if dom_price_ready(dom_price):
+                break
+            await asyncio.sleep(0.5)
         source = raw.get("source", "none")
         store: dict[str, Any] = {}
+        dom_price_applied = False
 
         if raw.get("cachedMap"):
             raw_store = raw["cachedMap"].get(f"{shop_id}/{item_id}", {})
@@ -337,6 +497,9 @@ class ShopeeProbe:
                         store = raw_store
             except json.JSONDecodeError:
                 pass
+
+        if store:
+            dom_price_applied = apply_dom_price_fallback(store, dom_price)
 
         if store:
             body = {"bff_meta": None, "error": None, "error_msg": None, "data": store}
@@ -364,6 +527,8 @@ class ShopeeProbe:
             "has_real_data": bool(summary.get("has_real_data")),
             "url": product,
             "source": source,
+            "dom_price_text": dom_price.get("priceText") if isinstance(dom_price, dict) else None,
+            "dom_price_applied": dom_price_applied,
         }
 
         selected = {

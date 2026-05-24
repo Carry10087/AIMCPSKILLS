@@ -1,24 +1,9 @@
 {
-  "_说明": "本文件使用标准 JSON，不能写 // 注释；以下 _ 开头字段只是中文备注，程序会忽略。",
-  "_运行方式": "无参数运行 python task_worker.py 即会读取这里的配置。",
   "base_url": "http://43.167.215.67:12007",
-  "_base_url": "任务平台接口地址。",
   "api_token": "djdowbeb78jsjw91726jsksblapu@$HAIquanJgQip",
-  "_api_token": "任务平台接口 token。",
-  "adspower_profile_id": "",
-  "_adspower_profile_id": "可填写 AdsPower 环境 ID；留空则按当前 CDP 端口识别环境。",
-  "adspower_debug_port": 0,
-  "_adspower_debug_port": "浏览器 CDP 调试端口；0 表示自动发现已打开的浏览器。",
-  "concurrency": 8,
-  "_concurrency": "并发处理任务数量；旧版浏览器采集会走系统代理，先设为 1 防止代理被多页面同时请求打断。",
-  "success_limit": 0,
-  "_success_limit": "本轮成功提交多少个后停止；0 表示不限制，不会自动停。",
-  "return_home_after_task": false,
-  "_return_home_after_task": "速度优先，成功后不再回 Shopee 首页。",
-  "require_price_for_success": false,
-  "_require_price_for_success": "是否要求结果必须带价格才算成功；false 表示 SSR 缺价格但有真实商品数据也会提交。",
+  "adspower_debug_ports": [52969, 52331],
+  "browser_concurrency": 20,
+  "task_pull_qps": 5000,
   "api_timeout_seconds": 5,
-  "_api_timeout_seconds": "拉任务和提交任务接口超时时间，单位秒。",
-  "timeout_seconds": 25,
-  "_timeout_seconds": "Shopee 浏览器采集流程的等待时间，单位秒。"
+  "timeout_seconds": 35
 }

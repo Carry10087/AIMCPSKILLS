@@ -25,6 +25,14 @@ BASE_HOST = "https://shopee.tw"
 DEFAULT_TIMEOUT = 15
 _DEBUG_PORT_CACHE: int | None = None
 _DEBUG_PORT_LOCK = threading.Lock()
+BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
+BLOCKED_URL_PARTS = (
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "facebook.net",
+    "facebook.com/tr",
+)
 
 SSR_EXTRACT_JS = """
 () => {
@@ -376,6 +384,7 @@ class ShopeeProbe:
         self._debug_port: int | None = debug_port
         self._browser: Any | None = None
         self._page: Any | None = None
+        self._page_prepared = False
         self._loop = loop
         self._own_loop = loop is None
         self._closed = False
@@ -413,6 +422,7 @@ class ShopeeProbe:
         else:
             self._browser = None
             self._page = None
+            self._page_prepared = False
 
     def reopen_page(self, page_url: str) -> None:
         self._run(self._reopen_page_async(page_url))
@@ -420,14 +430,14 @@ class ShopeeProbe:
     async def _reopen_page_async(self, page_url: str) -> None:
         await self._disconnect_async()
         page = await self._ensure_page()
-        await page.goto(page_url, waitUntil="domcontentloaded", timeout=15000)
+        await self._goto_for_extract(page, page_url)
 
     def return_home(self, home_url: str) -> None:
         self._run(self._return_home_async(home_url))
 
     async def _return_home_async(self, home_url: str) -> None:
         page = await self._ensure_page()
-        await page.goto(home_url, waitUntil="domcontentloaded", timeout=15000)
+        await self._goto_for_extract(page, home_url)
 
     def fetch_first_usable(
         self, endpoints: Sequence[str], shop_id: int, item_id: int, referer: str,
@@ -444,6 +454,8 @@ class ShopeeProbe:
         from pyppeteer import connect
 
         if self._browser is not None and self._page is not None:
+            if not self._page_prepared:
+                await self._prepare_page(self._page)
             return self._page
 
         port = find_debug_port(self._debug_port)
@@ -453,18 +465,70 @@ class ShopeeProbe:
         info_url = f"http://127.0.0.1:{port}"
         version = requests.get(f"{info_url}/json/version", timeout=5).json()
         ws_url = version["webSocketDebuggerUrl"]
-        browser = await connect(browserWSEndpoint=ws_url)
-        page = await browser.newPage()
+        connect_timeout = max(5, min(int(self.timeout or DEFAULT_TIMEOUT), 15))
+        browser = await asyncio.wait_for(
+            connect(browserWSEndpoint=ws_url),
+            timeout=connect_timeout,
+        )
+        page = await asyncio.wait_for(browser.newPage(), timeout=connect_timeout)
+        await self._prepare_page(page)
         self._browser = browser
         self._page = page
         return page
+
+    async def _prepare_page(self, page: Any) -> None:
+        nav_timeout_ms = max(5000, int(self.timeout or DEFAULT_TIMEOUT) * 1000)
+        page.setDefaultNavigationTimeout(nav_timeout_ms)
+        set_default_timeout = getattr(page, "setDefaultTimeout", None)
+        if set_default_timeout:
+            set_default_timeout(nav_timeout_ms)
+        try:
+            await page.setCacheEnabled(True)
+        except Exception:
+            pass
+        try:
+            await page.setViewport({"width": 1200, "height": 800})
+        except Exception:
+            pass
+
+        async def handle_request(request: Any) -> None:
+            try:
+                resource_type = getattr(request, "resourceType", "") or ""
+                url = getattr(request, "url", "") or ""
+                if resource_type in BLOCKED_RESOURCE_TYPES or any(
+                    marker in url for marker in BLOCKED_URL_PARTS
+                ):
+                    await request.abort()
+                else:
+                    await request.continue_()
+            except Exception:
+                pass
+
+        try:
+            await page.setRequestInterception(True)
+            page.on("request", lambda request: asyncio.ensure_future(handle_request(request)))
+        except Exception:
+            pass
+        self._page_prepared = True
+
+    async def _goto_for_extract(self, page: Any, url: str) -> bool:
+        nav_timeout_ms = max(5000, int(self.timeout or DEFAULT_TIMEOUT) * 1000)
+        try:
+            await page.goto(url, waitUntil="domcontentloaded", timeout=nav_timeout_ms)
+            return True
+        except Exception:
+            try:
+                await page._client.send("Page.stopLoading")
+            except Exception:
+                pass
+            return False
 
     async def _fetch_ssr(
         self, shop_id: int, item_id: int, referer: str, *, full_page: bool = False,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         page = await self._ensure_page()
         product = referer or product_url(shop_id, item_id)
-        await page.goto(product, waitUntil="domcontentloaded", timeout=15000)
+        navigation_ok = await self._goto_for_extract(page, product)
         try:
             await page.waitForFunction(
                 "document.body && /\\$\\s*\\d/.test(document.body.innerText)",
@@ -527,6 +591,7 @@ class ShopeeProbe:
             "has_real_data": bool(summary.get("has_real_data")),
             "url": product,
             "source": source,
+            "navigation_ok": navigation_ok,
             "dom_price_text": dom_price.get("priceText") if isinstance(dom_price, dict) else None,
             "dom_price_applied": dom_price_applied,
         }
@@ -547,6 +612,7 @@ class ShopeeProbe:
                 pass
             finally:
                 self._page = None
+                self._page_prepared = False
         if self._browser is not None:
             try:
                 await self._browser.disconnect()

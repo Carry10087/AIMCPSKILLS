@@ -38,6 +38,7 @@ from shopee_probe import (
 
 DEFAULT_CONCURRENCY = 10
 EMPTY_PULL_SLEEP_SECONDS = 0.2
+DEFAULT_TASK_PULL_QPS = 0.0
 DEFAULT_SUCCESS_LIMIT = 0
 DEFAULT_MAX_CONSECUTIVE_SHOPEE_ERRORS = 2
 DEFAULT_VERIFY_RECOVERY_ATTEMPTS = 1
@@ -307,6 +308,17 @@ def int_or_zero(value: Any) -> int:
         return 0
 
 
+def parse_debug_ports(value: Any) -> list[int]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [port for port in (int_or_zero(item) for item in value) if port > 0]
+    if isinstance(value, int):
+        return [value] if value > 0 else []
+    text = str(value).replace(";", ",").replace(" ", ",")
+    return [port for port in (int_or_zero(part) for part in text.split(",")) if port > 0]
+
+
 def bool_from_config(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -367,6 +379,13 @@ def apply_int_config(
     value = configured_value(config, keys, env_name)
     if value is not None:
         setattr(args, attr, int(value))
+
+
+def task_pull_sleep_seconds(args: argparse.Namespace, worker_count: int = 1) -> float:
+    pull_qps = float(getattr(args, "task_pull_qps", 0) or 0)
+    if pull_qps <= 0:
+        return EMPTY_PULL_SLEEP_SECONDS
+    return max(0.0, worker_count / pull_qps)
 
 
 NO_TASK_MARKERS = (
@@ -1005,6 +1024,16 @@ def run_concurrent(args: argparse.Namespace) -> int:
     stop_event = threading.Event()
     state = {"processed": 0, "success_count": 0, "last_code": 0}
     state_lock = threading.Lock()
+    worker_count = max(1, int_or_zero(args.concurrency) or DEFAULT_CONCURRENCY)
+    empty_pull_sleep = task_pull_sleep_seconds(args, worker_count)
+    debug_ports = list(getattr(args, "debug_ports", []) or [])
+    browser_concurrency = max(1, int_or_zero(getattr(args, "browser_concurrency", 0)) or worker_count)
+
+    def debug_port_for_worker(worker_id: int) -> int:
+        if not debug_ports:
+            return int_or_zero(getattr(args, "debug_port", 0))
+        browser_index = ((worker_id - 1) // browser_concurrency) % len(debug_ports)
+        return debug_ports[browser_index]
 
     def reserve_round() -> int | None:
         with state_lock:
@@ -1030,11 +1059,12 @@ def run_concurrent(args: argparse.Namespace) -> int:
 
     def worker(worker_id: int) -> None:
         api = make_api_client(args)
+        debug_port = debug_port_for_worker(worker_id)
         probe = ShopeeProbe(
             timeout=args.timeout,
-            debug_port=args.debug_port or None,
+            debug_port=debug_port or None,
         )
-        print_worker_event("并发槽已启动", worker=worker_id)
+        print_worker_event("并发槽已启动", worker=worker_id, debug_port=debug_port or None)
         try:
             while not stop_event.is_set():
                 round_no = reserve_round()
@@ -1054,21 +1084,21 @@ def run_concurrent(args: argparse.Namespace) -> int:
                         pass
                     code, output = 1, None
                 record_result(code, output)
-                if output is None and not stop_event.is_set():
-                    time.sleep(EMPTY_PULL_SLEEP_SECONDS)
+                if output is None and not stop_event.is_set() and empty_pull_sleep > 0:
+                    time.sleep(empty_pull_sleep)
         finally:
             probe.close()
             print_worker_event("并发槽已停止", worker=worker_id)
 
-    worker_count = max(1, int_or_zero(args.concurrency) or DEFAULT_CONCURRENCY)
     print_worker_event(
         "worker 已启动",
         base_url=args.base_url,
         concurrency=worker_count,
+        browser_concurrency=browser_concurrency,
+        debug_ports=debug_ports or None,
+        task_pull_qps=args.task_pull_qps,
         api_timeout_seconds=args.api_timeout,
         timeout_seconds=args.timeout,
-        debug_port=args.debug_port or None,
-        profile_id=args.profile_id or None,
         success_limit=args.success_limit,
         require_price_for_success=args.require_price,
         return_home_after_task=args.return_home_after_task,
@@ -1112,6 +1142,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"并发处理任务数量。无参数运行时读取 config.json，默认 {DEFAULT_CONCURRENCY}。",
     )
     parser.add_argument(
+        "--task-pull-qps",
+        type=float,
+        default=DEFAULT_TASK_PULL_QPS,
+        help="拉任务接口空轮询 QPS 上限；0 表示使用默认空轮询间隔。",
+    )
+    parser.add_argument(
         "--success-limit",
         type=int,
         default=DEFAULT_SUCCESS_LIMIT,
@@ -1147,6 +1183,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="浏览器 CDP 调试端口。默认自动发现，也可在 config.json 里配置 adspower_debug_port。",
+    )
+    parser.add_argument(
+        "--debug-ports",
+        default="",
+        help="多个浏览器 CDP 调试端口，逗号分隔；也可在 config.json 里配置 adspower_debug_ports。",
+    )
+    parser.add_argument(
+        "--browser-concurrency",
+        type=int,
+        default=0,
+        help="每个浏览器端口分配的并发数；配置多个端口时会自动计算总并发。",
     )
     parser.add_argument(
         "--profile-id",
@@ -1230,26 +1277,18 @@ def main(argv: list[str] | None = None) -> int:
             or int_or_zero(os.getenv("ADSPOWER_DEBUG_PORT"))
             or int_or_zero(config.get("adspower_debug_port") or config.get("ADSPOWER_DEBUG_PORT"))
         )
-        args.profile_id = (
-            args.profile_id
-            or os.getenv("ADSPOWER_PROFILE_ID")
-            or str(config.get("adspower_profile_id") or config.get("ADSPOWER_PROFILE_ID") or "")
+        args.debug_ports = parse_debug_ports(
+            args.debug_ports
+            or os.getenv("ADSPOWER_DEBUG_PORTS")
+            or config.get("adspower_debug_ports")
+            or config.get("ADSPOWER_DEBUG_PORTS")
         )
-        args.return_home_after_task = (
-            args.return_home_after_task
-            or bool_from_config(os.getenv("RETURN_HOME_AFTER_TASK"))
-            or bool_from_config(config.get("return_home_after_task"))
-        )
-        args.stop_on_risk = (
-            args.stop_on_risk
-            or bool_from_config(os.getenv("STOP_ON_RISK"))
-            or bool_from_config(config.get("stop_on_risk"))
-        )
-        args.require_price = (
-            args.require_price
-            or bool_from_config(os.getenv("REQUIRE_PRICE_FOR_SUCCESS"))
-            or bool_from_config(config.get("require_price_for_success"))
-            or bool_from_config(config.get("require_price"))
+        if not args.debug_ports and args.debug_port:
+            args.debug_ports = [args.debug_port]
+        args.browser_concurrency = (
+            int_or_zero(args.browser_concurrency)
+            or int_or_zero(os.getenv("BROWSER_CONCURRENCY"))
+            or int_or_zero(config.get("browser_concurrency"))
         )
         apply_float_config(
             args,
@@ -1269,7 +1308,18 @@ def main(argv: list[str] | None = None) -> int:
             ("concurrency", "worker_concurrency"),
             "WORKER_CONCURRENCY",
         )
+        if args.debug_ports and args.browser_concurrency and not has_cli_option(raw_argv, "--concurrency"):
+            args.concurrency = len(args.debug_ports) * args.browser_concurrency
         args.concurrency = max(1, int_or_zero(args.concurrency) or DEFAULT_CONCURRENCY)
+        apply_float_config(
+            args,
+            "task_pull_qps",
+            "--task-pull-qps",
+            raw_argv,
+            config,
+            ("task_pull_qps", "pull_qps"),
+            "TASK_PULL_QPS",
+        )
         apply_int_config(
             args,
             "success_limit",
@@ -1315,26 +1365,12 @@ def main(argv: list[str] | None = None) -> int:
             ("timeout_seconds", "timeout"),
             "TIMEOUT_SECONDS",
         )
-        if not args.debug_port:
-            args.debug_port = find_debug_port() or 0
-        blocked_profile = blocked_profile_record(args)
-        if blocked_profile and not args.allow_risk_profile:
-            message = (
-                "当前 AdsPower 环境已在风险记录中。"
-                f" 标识={risk_identity(args)}，原因={blocked_profile.get('reason')}。"
-            )
-            if args.stop_on_risk:
-                raise WorkerError(
-                    message
-                    + f" 如确认已手动恢复，可删除 {risk_block_path(args).resolve()} 中对应记录，"
-                    "或临时加 --allow-risk-profile。"
-                )
-            print_worker_event(
-                "检测到风险锁，worker 仍保持常驻恢复",
-                identity=risk_identity(args),
-                reason=blocked_profile.get("reason"),
-                risk_block=str(risk_block_path(args).resolve()),
-            )
+        if not args.debug_ports:
+            auto_port = find_debug_port() or 0
+            args.debug_port = auto_port
+            args.debug_ports = [auto_port] if auto_port else []
+        elif not args.debug_port:
+            args.debug_port = args.debug_ports[0]
 
         api = make_api_client(args)
 
@@ -1348,6 +1384,7 @@ def main(argv: list[str] | None = None) -> int:
         processed = 0
         success_count = 0
         consecutive_shopee_errors = 0
+        empty_pull_sleep = task_pull_sleep_seconds(args, 1)
         shared_probe = ShopeeProbe(
             timeout=args.timeout,
             debug_port=args.debug_port or None,
@@ -1356,6 +1393,7 @@ def main(argv: list[str] | None = None) -> int:
             "worker 已启动",
             base_url=args.base_url,
             concurrency=1,
+            task_pull_qps=args.task_pull_qps,
             api_timeout_seconds=args.api_timeout,
             timeout_seconds=args.timeout,
             debug_port=args.debug_port or None,
@@ -1502,8 +1540,8 @@ def main(argv: list[str] | None = None) -> int:
                     return code
                 if args.once or (args.max_tasks and processed >= args.max_tasks):
                     return code
-                if output is None:
-                    time.sleep(EMPTY_PULL_SLEEP_SECONDS)
+                if output is None and empty_pull_sleep > 0:
+                    time.sleep(empty_pull_sleep)
         finally:
             shared_probe.close()
     except KeyboardInterrupt:

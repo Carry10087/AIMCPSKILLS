@@ -803,7 +803,8 @@ def process_task(
                     full_page=full_page,
                 )
                 response_body = fetched["body"]
-                summary = summarize_get_pc(response_body)
+                fetched_summary = fetched.get("summary")
+                summary = fetched_summary if isinstance(fetched_summary, dict) else summarize_get_pc(response_body)
                 has_required_price = (
                     not require_price_for_success
                     or summary.get("has_price") is not False
@@ -1283,6 +1284,14 @@ def main(argv: list[str] | None = None) -> int:
             or config.get("adspower_debug_ports")
             or config.get("ADSPOWER_DEBUG_PORTS")
         )
+        if not has_cli_option(raw_argv, "--require-price"):
+            require_price_config = configured_value(
+                config,
+                ("require_price_for_success", "require_price"),
+                "REQUIRE_PRICE_FOR_SUCCESS",
+            )
+            if require_price_config is not None:
+                args.require_price = bool_from_config(require_price_config)
         if not args.debug_ports and args.debug_port:
             args.debug_ports = [args.debug_port]
         args.browser_concurrency = (

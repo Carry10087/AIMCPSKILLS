@@ -19,6 +19,7 @@ from typing import Any
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.json")
 DEFAULT_TIMEOUT_SECONDS = 8
+DATE_FORMAT = "%Y-%m-%d"
 DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -131,6 +132,25 @@ def query_daily_stats(
         }
 
 
+def valid_date(value: str) -> str:
+    try:
+        datetime.strptime(value, DATE_FORMAT)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("日期格式必须是 YYYY-MM-DD，例如 2026-05-25。") from exc
+    return value
+
+
+def prompt_date(default_day: str) -> str:
+    while True:
+        value = input(f"请输入查询日期 YYYY-MM-DD，直接回车默认今天 {default_day}: ").strip()
+        if not value:
+            return default_day
+        try:
+            return valid_date(value)
+        except argparse.ArgumentTypeError as exc:
+            print(str(exc))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="专门查询 /api/stats/daily 每日统计接口。")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="配置文件路径。")
@@ -138,7 +158,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-token", help="任务平台 API_TOKEN。")
     parser.add_argument(
         "--date",
-        default=datetime.now().strftime("%Y-%m-%d"),
+        type=valid_date,
+        default=None,
         help="查询日期，格式 YYYY-MM-DD，默认今天。",
     )
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="超时时间，单位秒。")
@@ -154,6 +175,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     configure_stdout()
     args = build_parser().parse_args(argv)
+    default_day = datetime.now().strftime(DATE_FORMAT)
+    if args.date is None:
+        args.date = prompt_date(default_day) if sys.stdin.isatty() else default_day
 
     try:
         config = load_config(Path(args.config)) if args.config else {}

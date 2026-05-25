@@ -22,6 +22,7 @@ from typing import Any, Sequence
 import requests
 
 BASE_HOST = "https://shopee.tw"
+BIGGO_SEARCH_BASE = "https://biggo.com.tw/s/"
 DEFAULT_TIMEOUT = 15
 _DEBUG_PORT_CACHE: int | None = None
 _DEBUG_PORT_LOCK = threading.Lock()
@@ -88,29 +89,65 @@ SSR_EXTRACT_JS = """
 
 DOM_PRICE_EXTRACT_JS = r"""
 () => {
-    const priceRe = /\$\s*([0-9][0-9,]*)(?:\s*-\s*\$\s*([0-9][0-9,]*))?/;
+    const priceRe = /\$\s*([0-9][0-9,]*)(?:\s*-\s*\$?\s*([0-9][0-9,]*))?/;
+    const badContextRe = /(優惠券|折抵|運費|補償|低消|最高折抵|領取|配達|免運|折\$)/;
     const matches = [];
-    for (const el of document.querySelectorAll('body *')) {
-        const raw = (el.innerText || el.textContent || '').trim();
-        if (!raw || raw.length > 80 || !raw.includes('$')) continue;
+    const addMatch = (el, raw, depth) => {
+        if (!raw || raw.length > 120 || !raw.includes('$')) return;
         const text = raw.replace(/\s+/g, ' ');
+        if (badContextRe.test(text)) return;
         const match = text.match(priceRe);
-        if (!match) continue;
+        if (!match) return;
+        const minValue = Number(String(match[1] || '').replace(/,/g, ''));
+        const maxValue = Number(String(match[2] || match[1] || '').replace(/,/g, ''));
+        if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || minValue <= 0 || maxValue <= 0) return;
         const rect = el.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (rect.width <= 0 || rect.height <= 0) return;
         const style = getComputedStyle(el);
-        if (style.visibility === 'hidden' || style.display === 'none') continue;
+        if (style.visibility === 'hidden' || style.display === 'none') return;
         const fontSize = parseFloat(style.fontSize) || 0;
+        const color = style.color || '';
         const isRange = Boolean(match[2]);
         const exactish = text.length <= match[0].length + 8;
-        const score = fontSize * 10 + (isRange ? 120 : 0) + (exactish ? 30 : 0) - Math.max(rect.top, 0) * 0.01;
+        const redish = /rgb\(\s*(?:208|238|255|198|214)\s*,\s*(?:1|87|0|48)\s*,\s*(?:27|34|0|49)\s*\)/.test(color);
+        const inMainArea = rect.top >= 180 && rect.top <= 520 && rect.left >= 360;
+        const large = fontSize >= 24;
+        const score =
+            fontSize * 12
+            + (redish ? 180 : 0)
+            + (large ? 160 : 0)
+            + (inMainArea ? 140 : 0)
+            + (isRange ? 100 : 0)
+            + (exactish ? 90 : 0)
+            - depth * 55
+            - Math.max(rect.top - 260, 0) * 0.03;
         matches.push({
             text: match[0],
             min: match[1],
             max: match[2] || match[1],
             fontSize,
+            color,
+            top: rect.top,
+            left: rect.left,
+            exactish,
             score,
         });
+    };
+
+    const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+        const raw = (node.nodeValue || '').trim();
+        if (!raw || !raw.includes('$')) continue;
+        let el = node.parentElement;
+        for (let depth = 0; el && depth < 4; depth++, el = el.parentElement) {
+            addMatch(el, raw, depth);
+        }
+    }
+
+    for (const el of document.querySelectorAll('body *')) {
+        const raw = (el.innerText || el.textContent || '').trim();
+        addMatch(el, raw, 4);
     }
     matches.sort((a, b) => b.score - a.score);
     return {
@@ -119,11 +156,10 @@ DOM_PRICE_EXTRACT_JS = r"""
         maxText: matches.length ? matches[0].max : null,
         fontSize: matches.length ? matches[0].fontSize : null,
         score: matches.length ? matches[0].score : null,
-        hits: matches.slice(0, 5).map((match) => match.text),
+        hits: matches.slice(0, 8).map((match) => match.text),
     };
 }
 """
-
 
 def product_url(shop_id: int, item_id: int) -> str:
     return f"{BASE_HOST}/product/{shop_id}/{item_id}"
@@ -143,6 +179,21 @@ def parse_product_ids(value: str) -> tuple[int, int]:
     if "shop_id" in q and "item_id" in q:
         return int(q["shop_id"][0]), int(q["item_id"][0])
     raise RuntimeError("无法从链接中找到 shop_id/item_id")
+
+
+def url_matches_product(value: str, shop_id: int, item_id: int) -> bool:
+    text = urllib.parse.unquote(value or "")
+    if "/verify/" in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            f"/product/{shop_id}/{item_id}",
+            f"i.{shop_id}.{item_id}",
+            f"shopid={shop_id}&itemid={item_id}",
+            f"itemid={item_id}&shopid={shop_id}",
+        )
+    )
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -253,12 +304,177 @@ def _shopee_price_units(value: int | None) -> int | None:
     return value * 100000
 
 
+def biggo_search_url(title: str) -> str:
+    keyword = re.sub(r"\s+", " ", title or "").strip()
+    return f"{BIGGO_SEARCH_BASE}{urllib.parse.quote(keyword, safe='')}"
+
+
+def fetch_biggo_price(
+    title: str,
+    shop_id: int,
+    item_id: int,
+    timeout: float = 12.0,
+) -> tuple[dict[str, Any], str | None, int | None, str | None]:
+    if not title:
+        return {}, None, None, "商品标题为空，无法查询 BigGo"
+    url = biggo_search_url(title)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except Exception as exc:
+        return {}, url, None, f"BigGo 请求失败: {exc}"
+    if response.status_code >= 400:
+        return {}, url, response.status_code, f"BigGo HTTP {response.status_code}"
+
+    html_text = response.text
+    target = f"id={shop_id}.{item_id}"
+    start = html_text.find(target)
+    if start < 0:
+        encoded_product = urllib.parse.quote(f"https://shopee.tw/product/{shop_id}/{item_id}", safe="")
+        start = html_text.find(encoded_product)
+    if start < 0:
+        return {}, url, response.status_code, "BigGo 结果未找到目标商品 ID"
+
+    price_match = None
+    for match in re.finditer(r'data-price="true"[^>]*>\s*\$\s*([0-9][0-9,]*)(?:\s*-\s*\$?\s*([0-9][0-9,]*))?', html_text[start : start + 12000]):
+        price_match = match
+        break
+    if price_match is None:
+        return {}, url, response.status_code, "BigGo 目标商品附近未找到价格"
+
+    price_text = price_match.group(0).split(">", 1)[-1].strip()
+    min_text = price_match.group(1)
+    max_text = price_match.group(2) or min_text
+    return {
+        "source": "biggo_result_text",
+        "priceText": price_text,
+        "minText": min_text,
+        "maxText": max_text,
+        "fontSize": 18,
+        "score": 300,
+        "href": url,
+        "hits": [price_text],
+    }, url, response.status_code, None
+
+
+def _model_id(model: dict[str, Any]) -> int | None:
+    return _int_or_none(model.get("model_id") or model.get("modelid"))
+
+
+def _remove_removed_field(store: dict[str, Any], field_name: str) -> None:
+    removed_fields = store.get("removed_fields")
+    if not isinstance(removed_fields, list):
+        return
+    store["removed_fields"] = [field for field in removed_fields if field != field_name] or None
+
+
+def _valid_price_units(value: Any) -> bool:
+    return isinstance(value, int) and value > 0
+
+
+def _valid_price_box(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return any(_valid_price_units(value.get(key)) for key in ("single_value", "range_min", "range_max"))
+
+
+def _final_price_discount_units(product_price: dict[str, Any]) -> int:
+    final_price_info = product_price.get("final_price_info")
+    if not isinstance(final_price_info, dict):
+        return 0
+    vouchers = final_price_info.get("final_price_vouchers")
+    if not isinstance(vouchers, dict):
+        return 0
+    discount = 0
+    for voucher_key in ("platform_voucher", "shop_voucher"):
+        voucher = vouchers.get(voucher_key)
+        if isinstance(voucher, dict):
+            voucher_discount = voucher.get("voucher_discount")
+            if _valid_price_units(voucher_discount):
+                discount += voucher_discount
+    return discount
+
+
+def normalize_price_fields(store: dict[str, Any]) -> None:
+    store.pop("_dom_price_fallback", None)
+    item = store.get("item")
+    if not isinstance(item, dict):
+        return
+
+    item_price = item.get("price")
+    min_units = item.get("price_min")
+    max_units = item.get("price_max")
+    single_units = item_price if _valid_price_units(item_price) else None
+    if not _valid_price_units(min_units):
+        min_units = single_units
+    if not _valid_price_units(max_units):
+        max_units = single_units
+    if not _valid_price_units(min_units) or not _valid_price_units(max_units):
+        return
+    if min_units == max_units and single_units is None:
+        single_units = min_units
+        item["price"] = single_units
+
+    product_price = store.get("product_price")
+    if not isinstance(product_price, dict):
+        product_price = {}
+        store["product_price"] = product_price
+    product_price.setdefault("hide_price", False)
+    product_price.setdefault("has_final_price", True)
+
+    if not _valid_price_box(product_price.get("price")):
+        final_discount = _final_price_discount_units(product_price)
+        final_single_units = None
+        if single_units is not None and final_discount > 0:
+            final_single_units = max(single_units - final_discount, 1)
+        product_price["price"] = {
+            "single_value": final_single_units if final_single_units is not None else (single_units if single_units is not None else -1),
+            "range_min": -1 if single_units is not None else min_units,
+            "range_max": -1 if single_units is not None else max_units,
+            "price_mask": None,
+        }
+    _remove_removed_field(store, "product_price.price")
+
+    models = item.get("models")
+    price_model = product_price.get("price_model")
+    if not isinstance(models, list):
+        return
+    if single_units is not None:
+        for model in models:
+            if isinstance(model, dict) and model.get("price") in (None, -1):
+                model["price"] = single_units
+                if model.get("price_before_discount") in (None, -1):
+                    model["price_before_discount"] = 0
+    elif isinstance(price_model, dict):
+        min_model_id = _int_or_none(price_model.get("price_min_model_id"))
+        max_model_id = _int_or_none(price_model.get("price_max_model_id"))
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            current_model_id = _model_id(model)
+            if current_model_id == min_model_id and model.get("price") in (None, -1):
+                model["price"] = min_units
+            elif current_model_id == max_model_id and model.get("price") in (None, -1):
+                model["price"] = max_units
+            if model.get("price") not in (None, -1) and model.get("price_before_discount") in (None, -1):
+                model["price_before_discount"] = 0
+
+
 def dom_price_ready(dom_price: Any) -> bool:
     if not isinstance(dom_price, dict):
         return False
     min_twd = _parse_price_int(dom_price.get("minText"))
     max_twd = _parse_price_int(dom_price.get("maxText"))
     if min_twd is None or max_twd is None:
+        return False
+    if min_twd <= 0 or max_twd <= 0:
         return False
     try:
         font_size = float(dom_price.get("fontSize") or 0)
@@ -269,34 +485,35 @@ def dom_price_ready(dom_price: Any) -> bool:
     return min_twd != max_twd or font_size >= 24 or score >= 220
 
 
-def apply_dom_price_fallback(store: dict[str, Any], dom_price: Any) -> bool:
+def apply_dom_price_fallback(store: dict[str, Any], dom_price: Any) -> dict[str, Any] | None:
     if not isinstance(dom_price, dict):
-        return False
+        return None
     item = store.get("item")
     if not isinstance(item, dict):
-        return False
+        return None
 
     min_twd = _parse_price_int(dom_price.get("minText"))
     max_twd = _parse_price_int(dom_price.get("maxText"))
     if min_twd is None or max_twd is None:
-        return False
+        return None
 
+    store.pop("_dom_price_fallback", None)
     min_units = _shopee_price_units(min_twd)
     max_units = _shopee_price_units(max_twd)
+    single_units = min_units if min_twd == max_twd else None
     item["price_min"] = min_units
     item["price_max"] = max_units
-    if min_twd == max_twd:
-        item["price"] = min_units
-    else:
-        item["price"] = None
+    item["price"] = single_units
 
-    store["_dom_price_fallback"] = {
-        "source": "dom_text",
+    normalize_price_fields(store)
+
+    return {
+        "source": dom_price.get("source") or "dom_text",
         "price_text": dom_price.get("priceText"),
         "price_min_twd": min_twd,
         "price_max_twd": max_twd,
+        "href": dom_price.get("href"),
     }
-    return True
 
 
 def _txt(v: Any, n: int = 200) -> str | None:
@@ -316,7 +533,63 @@ def _price_field(value: Any, *keys: str) -> Any:
     return None
 
 
-def summarize(store: dict[str, Any]) -> dict[str, Any]:
+def _first_price_value(*values: Any) -> Any:
+    for value in values:
+        if _valid_price_units(value):
+            return value
+    return None
+
+
+def _any_response_price(store: dict[str, Any]) -> bool:
+    item = store.get("item") or {}
+    pp = store.get("product_price") or {}
+    price_breakdown = store.get("price_breakdown") or {}
+    models = item.get("models") or []
+
+    candidates: list[Any] = []
+    if isinstance(item, dict):
+        candidates.extend(
+            item.get(key)
+            for key in (
+                "price",
+                "price_min",
+                "price_max",
+                "price_before_discount",
+                "price_min_before_discount",
+                "price_max_before_discount",
+            )
+        )
+    if isinstance(pp, dict):
+        for field in ("price", "price_before_discount", "lowest_past_price"):
+            value = pp.get(field)
+            candidates.extend(
+                (
+                    _price_field(value, "single_value", "range_min", "range_max"),
+                    value,
+                )
+            )
+    if isinstance(price_breakdown, dict):
+        for field in ("price", "price_before_discount"):
+            value = price_breakdown.get(field)
+            candidates.extend(
+                (
+                    _price_field(value, "single_value", "range_min", "range_max"),
+                    value,
+                )
+            )
+    if isinstance(models, list):
+        for model in models:
+            if isinstance(model, dict):
+                candidates.extend((model.get("price"), model.get("price_before_discount")))
+    return any(_valid_price_units(value) for value in candidates)
+
+
+def summarize(
+    store: dict[str, Any],
+    *,
+    price_source: str | None = None,
+    price_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     item = store.get("item") or {}
     pp = store.get("product_price") or {}
     review = store.get("product_review") or {}
@@ -326,11 +599,38 @@ def summarize(store: dict[str, Any]) -> dict[str, Any]:
     models = item.get("models") or []
     pm = pp.get("price_model") or {}
     price_box = pp.get("price")
-    price_twd = _price(item.get("price") or _price_field(price_box, "single_value", "range_min", "range_max") or pp.get("price"))
-    price_min_twd = _price(item.get("price_min") or _price_field(price_box, "range_min", "single_value") or pp.get("price_min"))
-    price_max_twd = _price(item.get("price_max") or _price_field(price_box, "range_max", "single_value") or pp.get("price_max"))
-    has_price = any((price_twd, price_min_twd, price_max_twd))
-    dom_price_fallback = store.get("_dom_price_fallback") or {}
+    model_prices = [
+        model.get("price")
+        for model in models
+        if isinstance(model, dict) and _valid_price_units(model.get("price"))
+    ]
+    price_twd = _price(
+        _first_price_value(
+            item.get("price"),
+            _price_field(price_box, "single_value", "range_min", "range_max"),
+            pp.get("price"),
+            model_prices[0] if model_prices else None,
+        )
+    )
+    price_min_twd = _price(
+        _first_price_value(
+            item.get("price_min"),
+            _price_field(price_box, "range_min", "single_value"),
+            pp.get("price_min"),
+            min(model_prices) if model_prices else None,
+        )
+    )
+    price_max_twd = _price(
+        _first_price_value(
+            item.get("price_max"),
+            _price_field(price_box, "range_max", "single_value"),
+            pp.get("price_max"),
+            max(model_prices) if model_prices else None,
+        )
+    )
+    has_price = any((price_twd, price_min_twd, price_max_twd)) or _any_response_price(store)
+    price_meta = price_meta if isinstance(price_meta, dict) else {}
+    resolved_price_source = price_source or "ssr_cachedMap"
 
     return dict(
         has_real_data=bool(item),
@@ -357,8 +657,8 @@ def summarize(store: dict[str, Any]) -> dict[str, Any]:
         description_preview=_txt(item.get("description") or store.get("product_description", {}).get("description")),
         review_count=review.get("cmt_count") or 0,
         price_model_id=pm.get("price_single_model_id"),
-        price_source="dom_text" if dom_price_fallback else "ssr_cachedMap",
-        dom_price_text=dom_price_fallback.get("price_text") if isinstance(dom_price_fallback, dict) else None,
+        price_source=resolved_price_source,
+        dom_price_text=price_meta.get("price_text") if price_meta else None,
         source="ssr_cachedMap",
     )
 
@@ -476,6 +776,47 @@ class ShopeeProbe:
         self._page = page
         return page
 
+    async def _ensure_product_page(
+        self, shop_id: int, item_id: int,
+    ) -> tuple[Any, bool]:
+        from pyppeteer import connect
+
+        if self._browser is None:
+            port = find_debug_port(self._debug_port)
+            if not port:
+                raise ProbeError("未找到可用浏览器 CDP 调试端口。")
+            self._debug_port = port
+            info_url = f"http://127.0.0.1:{port}"
+            version = requests.get(f"{info_url}/json/version", timeout=5).json()
+            ws_url = version["webSocketDebuggerUrl"]
+            connect_timeout = max(5, min(int(self.timeout or DEFAULT_TIMEOUT), 15))
+            self._browser = await asyncio.wait_for(
+                connect(browserWSEndpoint=ws_url),
+                timeout=connect_timeout,
+            )
+
+        try:
+            pages = await self._browser.pages()
+        except Exception:
+            pages = []
+
+        for candidate in pages:
+            try:
+                candidate_url = str(getattr(candidate, "url", "") or "")
+            except Exception:
+                candidate_url = ""
+            if not url_matches_product(candidate_url, shop_id, item_id):
+                continue
+            self._page = candidate
+            self._page_prepared = False
+            return candidate, True
+
+        connect_timeout = max(5, min(int(self.timeout or DEFAULT_TIMEOUT), 15))
+        page = await asyncio.wait_for(self._browser.newPage(), timeout=connect_timeout)
+        await self._prepare_page(page)
+        self._page = page
+        return page, False
+
     async def _prepare_page(self, page: Any) -> None:
         nav_timeout_ms = max(5000, int(self.timeout or DEFAULT_TIMEOUT) * 1000)
         page.setDefaultNavigationTimeout(nav_timeout_ms)
@@ -526,9 +867,16 @@ class ShopeeProbe:
     async def _fetch_ssr(
         self, shop_id: int, item_id: int, referer: str, *, full_page: bool = False,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        page = await self._ensure_page()
+        page, reused_existing_page = await self._ensure_product_page(shop_id, item_id)
         product = referer or product_url(shop_id, item_id)
-        navigation_ok = await self._goto_for_extract(page, product)
+        navigation_ok = True
+        if reused_existing_page:
+            try:
+                await page.bringToFront()
+            except Exception:
+                pass
+        else:
+            navigation_ok = await self._goto_for_extract(page, product)
         try:
             await page.waitForFunction(
                 "document.body && /\\$\\s*\\d/.test(document.body.innerText)",
@@ -546,24 +894,66 @@ class ShopeeProbe:
             await asyncio.sleep(0.5)
         source = raw.get("source", "none")
         store: dict[str, Any] = {}
+        price_meta: dict[str, Any] | None = None
+        price_source = "ssr_cachedMap"
         dom_price_applied = False
+        biggo_url: str | None = None
+        biggo_status: int | None = None
+        biggo_error: str | None = None
 
-        if raw.get("cachedMap"):
-            raw_store = raw["cachedMap"].get(f"{shop_id}/{item_id}", {})
-            if isinstance(raw_store, dict):
-                store = raw_store
-        elif raw.get("rawText"):
-            try:
-                parsed = json.loads(raw["rawText"])
+        def extract_store(raw_value: dict[str, Any]) -> dict[str, Any]:
+            if raw_value.get("cachedMap"):
+                raw_store = raw_value["cachedMap"].get(f"{shop_id}/{item_id}", {})
+                if isinstance(raw_store, dict):
+                    return raw_store
+            if raw_value.get("rawText"):
+                try:
+                    parsed = json.loads(raw_value["rawText"])
+                except json.JSONDecodeError:
+                    return {}
                 if isinstance(parsed, dict):
                     raw_store = parsed.get(f"{shop_id}/{item_id}", {})
                     if isinstance(raw_store, dict):
-                        store = raw_store
-            except json.JSONDecodeError:
-                pass
+                        return raw_store
+            return {}
 
-        if store:
-            dom_price_applied = apply_dom_price_fallback(store, dom_price)
+        store = extract_store(raw)
+
+        if not store and reused_existing_page and dom_price_ready(dom_price):
+            fallback_page = await self._browser.newPage()
+            await self._prepare_page(fallback_page)
+            navigation_ok = await self._goto_for_extract(fallback_page, product)
+            fallback_raw = await fallback_page.evaluate(SSR_EXTRACT_JS)
+            fallback_store = extract_store(fallback_raw)
+            if fallback_store:
+                raw = fallback_raw
+                source = raw.get("source", "none")
+                store = fallback_store
+                self._page = fallback_page
+                self._page_prepared = True
+
+        store_has_price = bool(summarize(store).get("has_price")) if store else False
+        if store and not store_has_price:
+            item = store.get("item")
+            title = str(item.get("title") or "") if isinstance(item, dict) else ""
+            biggo_price, biggo_url, biggo_status, biggo_error = await asyncio.to_thread(
+                fetch_biggo_price,
+                title,
+                shop_id,
+                item_id,
+            )
+            if dom_price_ready(biggo_price):
+                price_meta = apply_dom_price_fallback(store, biggo_price)
+                dom_price_applied = price_meta is not None
+                if dom_price_applied:
+                    price_source = str(price_meta.get("source") or "biggo_result_text")
+        if store and not store_has_price and not dom_price_applied and dom_price_ready(dom_price):
+            price_meta = apply_dom_price_fallback(store, dom_price)
+            dom_price_applied = price_meta is not None
+            if dom_price_applied:
+                price_source = str(price_meta.get("source") or "dom_text")
+        if store and not dom_price_applied:
+            normalize_price_fields(store)
 
         if store:
             body = {"bff_meta": None, "error": None, "error_msg": None, "data": store}
@@ -582,7 +972,7 @@ class ShopeeProbe:
                 "data": None,
             }
 
-        summary = summarize(store) if store else {"has_real_data": False}
+        summary = summarize(store, price_source=price_source, price_meta=price_meta) if store else {"has_real_data": False}
         attempt = {
             "endpoint": "ssr_cachedMap",
             "http_status": 200 if store else 500,
@@ -592,8 +982,13 @@ class ShopeeProbe:
             "url": product,
             "source": source,
             "navigation_ok": navigation_ok,
-            "dom_price_text": dom_price.get("priceText") if isinstance(dom_price, dict) else None,
+            "reused_existing_page": reused_existing_page,
+            "dom_price_text": price_meta.get("price_text") if price_source == "dom_text" and price_meta else None,
             "dom_price_applied": dom_price_applied,
+            "biggo_url": biggo_url,
+            "biggo_http_status": biggo_status,
+            "biggo_error": biggo_error,
+            "biggo_price_text": price_meta.get("price_text") if price_source == "biggo_result_text" and price_meta else None,
         }
 
         selected = {
@@ -601,6 +996,7 @@ class ShopeeProbe:
             "http_status": attempt["http_status"],
             "endpoint": attempt["endpoint"],
             "url": attempt["url"],
+            "summary": summary,
         }
         return selected, [attempt]
 

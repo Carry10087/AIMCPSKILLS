@@ -1,9 +1,10 @@
 {
   "base_url": "http://43.167.215.67:12007",
   "api_token": "djdowbeb78jsjw91726jsksblapu@$HAIquanJgQip",
-  "adspower_debug_ports": [52969, 52331],
+  "adspower_debug_ports": [49610,50277],
   "browser_concurrency": 20,
   "task_pull_qps": 5000,
+  "require_price_for_success": true,
   "api_timeout_seconds": 15,
   "timeout_seconds": 35
 }
